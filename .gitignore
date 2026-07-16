@@ -1,0 +1,16 @@
+# Credenciais reais — nunca versionar (use .env.example como template)
+.env
+
+# Dados gerados pela ingestão (Bronze local) — reproduzível, não é código-fonte
+data/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+venv/
+.venv/
+
+# Notebooks
+.ipynb_checkpoints/

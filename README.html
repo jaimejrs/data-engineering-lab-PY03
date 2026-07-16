@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingestão &amp; Camada Bronze — Ceará Transparente</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1b1f24;
+    --muted: #57606a;
+    --border: #d8dee4;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --danger: #cf222e;
+    --chip-bg: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --accent: #4493f8;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --danger: #f85149;
+      --chip-bg: #1c2128;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+  }
+  h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+  h2 {
+    font-size: 1.3rem;
+    margin-top: 2.8rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.05rem; margin-top: 1.8rem; }
+  p, li { color: var(--fg); }
+  .subtitle { color: var(--muted); font-size: 1.05rem; margin-top: 0; }
+  .meta-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0 0; }
+  .chip {
+    display: inline-block;
+    background: var(--chip-bg);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.7rem;
+    font-size: 0.8rem;
+  }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+    display: block;
+    overflow-x: auto;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--code-bg); }
+  .status { font-weight: 600; }
+  .status.done { color: var(--ok); }
+  .status.progress { color: var(--warn); }
+  .status.todo { color: var(--danger); }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--code-bg);
+    padding: 0.8rem 1rem;
+    border-radius: 0 6px 6px 0;
+    margin: 1rem 0;
+  }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.danger { border-left-color: var(--danger); }
+  .tree {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.85rem;
+    white-space: pre;
+  }
+  footer {
+    margin-top: 4rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Ingestão &amp; Camada Bronze — Ceará Transparente</h1>
+<p class="subtitle">Escopo do Membro 3 (Nara) — extração da API REST e do PostgreSQL de origem para a camada Bronze (arquitetura medalhão)</p>
+<div class="meta-row">
+  <span class="chip">Fase 1 — Ingestão</span>
+  <span class="chip">Última atualização: 16/07/2026</span>
+  <span class="chip">Responsável: Nara (Membro 3)</span>
+</div>
+
+<h2>Visão geral</h2>
+<p>
+Este módulo extrai dados de duas fontes e grava na camada Bronze (local em disco, para desenvolvimento, ou HDFS via WebHDFS, para o pipeline compartilhado):
+</p>
+<ul>
+  <li><strong>API REST do Ceará Transparente</strong> — contratos públicos (<code>contratos/contratos</code>), com paginação.</li>
+  <li><strong>PostgreSQL de origem</strong> — tabelas <code>empenhos</code>, <code>ordem_bancaria_orcamentaria</code> (filtradas por data) e <code>unidade_gestora</code> (tabela de referência, completa a cada execução).</li>
+</ul>
+
+<h2>Estrutura de diretórios</h2>
+<div class="tree">projeto-final/
+├── data/bronze/              # saída local (dev) — ignorado pelo git
+├── notebooks/
+│   └── exploracao_ingestao.ipynb
+├── src/
+│   ├── extractors/
+│   │   ├── api_extractor.py       ← extração paginada da API de contratos
+│   │   ├── postgres_extractor.py  ← extração das tabelas de origem
+│   │   └── storage.py             ← escrita na Bronze (local ou HDFS)
+│   ├── transformers/         # Silver/Gold — Membro 2 (ainda não implementado)
+│   └── loaders/               # carga no DW — Membro 2 (ainda não implementado)
+├── dags/                      # Airflow — Membro 1 (ainda não implementado)
+├── sql/                       # DDL do DW — Membro 2 (ainda não implementado)
+├── models/                    # ML — Membro 4 (ainda não implementado)
+├── tests/
+│   └── test_extractors.py
+├── .env / .env.example
+└── requirements.txt</div>
+
+<h2>Configuração</h2>
+<p>Copie <code>.env.example</code> para <code>.env</code> e ajuste os valores. Variáveis relevantes para este módulo:</p>
+<table>
+  <tr><th>Variável</th><th>Descrição</th><th>Padrão</th></tr>
+  <tr><td><code>CEARA_TRANSPARENTE_API_URL</code></td><td>Endpoint base da API de contratos</td><td>URL oficial da API</td></tr>
+  <tr><td><code>CEARA_API_TIMEOUT_SECONDS</code></td><td>Timeout por requisição</td><td>30</td></tr>
+  <tr><td><code>CEARA_API_SLEEP_SECONDS</code></td><td>Espera entre páginas (rate limit)</td><td>1.0</td></tr>
+  <tr><td><code>CEARA_API_MAX_RETRIES</code></td><td>Tentativas em caso de falha/429</td><td>3</td></tr>
+  <tr><td><code>SOURCE_POSTGRES_URL</code></td><td>String de conexão do Postgres de origem</td><td>—</td></tr>
+  <tr><td><code>POSTGRES_EXTRACT_CHUNK_SIZE</code></td><td>Máx. de linhas por arquivo JSON gravado</td><td>20000</td></tr>
+  <tr><td><code>BRONZE_STORAGE_BACKEND</code></td><td><code>local</code> (disco) ou <code>hdfs</code> (WebHDFS)</td><td>local</td></tr>
+  <tr><td><code>BRONZE_BASE_PATH</code></td><td>Caminho base — relativo se <code>local</code>, absoluto (<code>/bronze</code>) se <code>hdfs</code></td><td>./data/bronze</td></tr>
+  <tr><td><code>HDFS_WEBHDFS_URL</code></td><td>URL do NameNode (WebHDFS)</td><td>—</td></tr>
+  <tr><td><code>HDFS_USER</code></td><td>Usuário HDFS (via <code>user.name</code>)</td><td>—</td></tr>
+</table>
+<div class="callout danger">
+<strong>Nunca commitar o <code>.env</code></strong> — já está no <code>.gitignore</code>. Só o <code>.env.example</code> (sem credenciais reais) deve ir para o repositório.
+</div>
+
+<h2>Como rodar</h2>
+<pre><code># Contratos da API (datas em ISO — a conversão para o formato da API é automática)
+python -m src.extractors.api_extractor --inicio 2026-06-01 --fim 2026-06-03
+
+# Tabelas do PostgreSQL (empenhos, ordem_bancaria_orcamentaria, unidade_gestora)
+python -m src.extractors.postgres_extractor --inicio 2026-06-01 --fim 2026-06-04
+
+# Testes
+python -m pytest tests/ -v</code></pre>
+
+<h2>Particularidades importantes (não estão no enunciado oficial)</h2>
+
+<h3>API de contratos</h3>
+<ul>
+  <li><strong>Formato de data real da API é <code>DD/MM/YYYY</code></strong>, não ISO. Os argumentos <code>--inicio</code>/<code>--fim</code> do script continuam em ISO (<code>YYYY-MM-DD</code>) por consistência com o extractor do Postgres — a conversão pro formato da API é feita internamente. Enviar ISO direto faz a API responder <code>HTTP 200</code> com texto puro de erro em vez de JSON.</li>
+  <li><strong>A chave de paginação é <code>"sumary"</code></strong> (erro de digitação real da API, falta o 2º "m"), não <code>"summary"</code> como o enunciado sugere. O código já trata isso com fallback: <code>payload.get("sumary") or payload.get("summary")</code>.</li>
+  <li>Se a resposta não trouxer <code>total_pages</code> de nenhuma das duas formas, a extração <strong>aborta com erro</strong> em vez de arriscar um loop infinito.</li>
+  <li><code>sleep</code> entre páginas e retry com backoff em respostas <code>429</code>/falha de rede, configuráveis via <code>.env</code>.</li>
+</ul>
+
+<h3>PostgreSQL de origem</h3>
+<ul>
+  <li>Nenhuma tabela tem <strong>PRIMARY KEY</strong> declarada no banco real, mesmo as que o enunciado descreve com PK lógica (ex: <code>empenhos (PK: id, ano)</code>). Não assumir unicidade de <code>id</code> sem deduplicação a jusante.</li>
+  <li>Colunas de data são <code>TEXT</code> (ex: <code>'2026-06-02 00:00:00.000'</code>), não <code>DATE</code>/<code>TIMESTAMP</code>. A comparação lexicográfica com <code>'YYYY-MM-DD'</code> funciona porque o prefixo é ISO 8601. A coluna real usada para filtro incremental é <code>dataemissao</code> (não <code>data_empenho</code>/<code>data_pagamento</code> como um rascunho antigo do enunciado sugeria).</li>
+  <li>Cada tabela é gravada em <strong>blocos de até <code>POSTGRES_EXTRACT_CHUNK_SIZE</code> linhas</strong> (<code>chunk_0001.json</code>, <code>chunk_0002.json</code>, ...) em vez de um arquivo único — necessário porque o histórico completo de <code>empenhos</code>/<code>ordem_bancaria_orcamentaria</code> tem centenas de milhares a milhões de linhas, e um arquivo único ficaria grande demais para escrever de uma vez via WebHDFS.</li>
+</ul>
+
+<h3>Backend HDFS — atenção ao rodar fora da rede do Datalab</h3>
+<div class="callout warn">
+O WebHDFS grava em duas etapas: o NameNode responde com um redirecionamento apontando para o <strong>hostname interno do DataNode</strong> (<code>hadoop</code>, porta <code>9864</code>) — nome que não resolve fora da rede Docker do Datalab. Se for rodar a extração com <code>BRONZE_STORAGE_BACKEND=hdfs</code> de uma máquina Windows fora do servidor (via VPN), é necessário adicionar ao <code>hosts</code> (<code>C:\Windows\System32\drivers\etc\hosts</code>):
+<pre><code>100.69.31.14 hadoop</code></pre>
+Atenção a uma possível entrada conflitante <code>127.0.0.1 hadoop</code> criada pelo Docker Desktop — ela precisa estar comentada/removida, senão a escrita falha com <code>ConnectionRefusedError</code>/<code>MaxRetryError</code> mesmo com a permissão do HDFS correta.
+</div>
+
+<h2>Chaves de junção — Contratos (API) × PostgreSQL</h2>
+<p>Validadas cruzando os contratos já extraídos contra o banco real (amostra de 740 contratos, 01–03/06/2026). Relevante para o Membro 2 montar <code>fato_contrato</code> na Fase 2.</p>
+<table>
+  <tr><th>Campo API</th><th>Campo Postgres</th><th>Confiabilidade</th><th>Observação</th></tr>
+  <tr>
+    <td><code>cod_gestora</code></td>
+    <td><code>empenhos.codigoug</code> / <code>unidade_gestora.codigo</code></td>
+    <td><span class="status done">100% match</span></td>
+    <td>Join confiável. <code>unidade_gestora</code> é versionada por <code>ano</code> — juntar sempre por <code>(codigo, ano)</code>.</td>
+  </tr>
+  <tr>
+    <td><code>plain_cpf_cnpj_financiador</code></td>
+    <td><code>empenhos.codigocredor</code></td>
+    <td><span class="status progress">96% match</span></td>
+    <td>Relação N:N (um credor pode ter vários contratos/empenhos) — não é join 1:1.</td>
+  </tr>
+  <tr>
+    <td><code>num_spu</code></td>
+    <td><code>empenhos.codprocesso</code></td>
+    <td><span class="status todo">~7,5% match</span></td>
+    <td>Mesmo formato de processo administrativo, mas baixa cobertura na amostra. Usar só como enriquecimento best-effort.</td>
+  </tr>
+  <tr>
+    <td><code>num_contrato</code> / <code>plain_num_contrato</code></td>
+    <td><code>empenhos.codcontrato</code></td>
+    <td><span class="status todo">Sem correspondência</span></td>
+    <td>Domínios diferentes (provável código interno SIAFEM). Não usar sem achar um de-para real.</td>
+  </tr>
+</table>
+<div class="callout">
+A própria API de contratos já retorna <code>calculated_valor_empenhado</code> e <code>calculated_valor_pago</code> por contrato, junto de <code>valor_contrato</code>/<code>valor_atualizado_concedente</code> — útil para métricas de execução financeira (% pago, % empenhado, detecção de pagamento acima do valor) sem depender do join fraco com <code>empenhos</code>/<code>ordem_bancaria_orcamentaria</code>.
+</div>
+
+<h2>Status das tarefas (Fase 1 — Ingestão)</h2>
+<table>
+  <tr><th>Tarefa</th><th>Status</th><th>Nota</th></tr>
+  <tr><td>Extrair <code>empenhos</code> do PostgreSQL para o HDFS</td><td><span class="status done">Concluída</span></td><td>Validado ponta a ponta no HDFS real (5.313 registros na amostra de teste)</td></tr>
+  <tr><td>Extrair <code>ordem_bancaria_orcamentaria</code> do PostgreSQL para o HDFS</td><td><span class="status done">Concluída</span></td><td>Validado ponta a ponta no HDFS real (7.164 registros na amostra de teste)</td></tr>
+  <tr><td>Extração paginada da API de contratos</td><td><span class="status done">Concluída</span></td><td>Testada com 740 contratos reais extraídos</td></tr>
+  <tr><td>Inspecionar <code>total_pages</code> e controlar sleep/rate limit</td><td><span class="status done">Concluída</span></td><td>Implementado no mesmo módulo da extração da API</td></tr>
+  <tr><td>Extração incremental automática (watermark)</td><td><span class="status todo">Pendente</span></td><td>Hoje o período é passado manualmente via <code>--inicio</code>/<code>--fim</code>; falta persistir a última data processada (ex: Variable do Airflow, a ser criada junto da DAG do Membro 1)</td></tr>
+</table>
+
+<footer>
+Ceará Transparente — Pipeline de Dados e IA · Documentação de ingestão (Membro 3)
+</footer>
+
+</body>
+</html>

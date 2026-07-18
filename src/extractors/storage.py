@@ -39,3 +39,41 @@ def write_json_records(relative_path: str, records: list) -> str:
 
     logger.info("Bronze [%s]: %s (%s registros)", BRONZE_BACKEND, full_path, len(records))
     return full_path
+
+
+def list_json_files(relative_dir: str) -> list:
+    """Lista os arquivos `.json` diretamente sob um diretório da Bronze (não recursivo).
+
+    Retorna caminhos relativos a `BRONZE_BASE_PATH`. Retorna lista vazia se o
+    diretório não existir (execução sem dados no período, ou ainda não extraída).
+    """
+    full_dir = f"{BRONZE_BASE_PATH.rstrip('/')}/{relative_dir.strip('/')}"
+
+    if BRONZE_BACKEND == "hdfs":
+        client = _get_hdfs_client()
+        try:
+            names = client.list(full_dir)
+        except Exception:
+            return []
+        return sorted(f"{relative_dir.strip('/')}/{name}" for name in names if name.endswith(".json"))
+
+    if not os.path.isdir(full_dir):
+        return []
+    return sorted(
+        f"{relative_dir.strip('/')}/{name}"
+        for name in os.listdir(full_dir)
+        if name.endswith(".json")
+    )
+
+
+def read_json_records(relative_path: str) -> list:
+    """Lê de volta uma lista de registros gravada na Bronze por `write_json_records`."""
+    full_path = f"{BRONZE_BASE_PATH.rstrip('/')}/{relative_path.lstrip('/')}"
+
+    if BRONZE_BACKEND == "hdfs":
+        client = _get_hdfs_client()
+        with client.read(full_path, encoding="utf-8") as reader:
+            return json.load(reader)
+
+    with open(full_path, "r", encoding="utf-8") as fh:
+        return json.load(fh)

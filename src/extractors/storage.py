@@ -66,6 +66,46 @@ def list_json_files(relative_dir: str) -> list:
     )
 
 
+def find_data_extracao_dirs(relative_root: str, run_date: str) -> list:
+    """Encontra, recursivamente, todos os diretórios `data_extracao={run_date}`
+    sob `relative_root` da Bronze.
+
+    Cobre tanto fontes com particionamento plano (`contratos/`,
+    `unidade_gestora/` — `data_extracao=` direto sob a raiz da fonte) quanto
+    por `ano=/mes=` (`empenhos/`, `ordem_bancaria_orcamentaria/`, onde uma
+    mesma `data_extracao` pode se espalhar por vários `ano=/mes=`), sem
+    precisar saber de antemão qual layout cada fonte usa. Retorna caminhos
+    relativos a `BRONZE_BASE_PATH`, prontos para passar a `list_json_files`.
+    """
+    target_name = f"data_extracao={run_date}"
+    full_root = f"{BRONZE_BASE_PATH.rstrip('/')}/{relative_root.strip('/')}"
+    # Normaliza para "/" antes de montar o prefixo: no backend local, em
+    # Windows, BRONZE_BASE_PATH vem com "\" (os.walk também retorna "\"), mas
+    # os caminhos HDFS e o restante do módulo usam "/" — sem isso o strip do
+    # prefixo silenciosamente não bate e o caminho relativo vira o absoluto.
+    base_prefix = BRONZE_BASE_PATH.replace("\\", "/").rstrip("/") + "/"
+
+    if BRONZE_BACKEND == "hdfs":
+        client = _get_hdfs_client()
+        try:
+            dirpaths = [dirpath for dirpath, _dirs, _files in client.walk(full_root)]
+        except Exception:
+            return []
+    else:
+        if not os.path.isdir(full_root):
+            return []
+        dirpaths = [
+            dirpath.replace(os.sep, "/") for dirpath, _dirs, _files in os.walk(full_root)
+        ]
+
+    matches = [
+        dirpath[len(base_prefix):] if dirpath.startswith(base_prefix) else dirpath.lstrip("/")
+        for dirpath in dirpaths
+        if dirpath.rstrip("/").rsplit("/", 1)[-1] == target_name
+    ]
+    return sorted(matches)
+
+
 def read_json_records(relative_path: str) -> list:
     """Lê de volta uma lista de registros gravada na Bronze por `write_json_records`."""
     full_path = f"{BRONZE_BASE_PATH.rstrip('/')}/{relative_path.lstrip('/')}"

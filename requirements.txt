@@ -3,14 +3,14 @@ apache-airflow[postgres,http]==2.9.3
 
 # Conexão com PostgreSQL
 psycopg2-binary==2.9.9
-sqlalchemy==2.0.30
+sqlalchemy>=1.4.36,<2.0  # apache-airflow==2.9.3 exige sqlalchemy<2.0
 
 # Chamadas à API REST
 requests==2.32.3
 
 # Manipulação e serialização de dados
 pandas==2.2.2
-pyarrow==16.1.0
+pyarrow==15.0.2  # mlflow==2.14.1 exige pyarrow<16
 
 # Armazenamento distribuído (HDFS via WebHDFS)
 hdfs==2.7.3

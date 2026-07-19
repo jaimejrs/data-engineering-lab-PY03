@@ -11,7 +11,7 @@ Implementação inicial de apoio à DAG 1 (Membro 1) — a cargo do Membro 4
 
 import logging
 
-from src.extractors.storage import list_json_files, read_json_records
+from src.extractors.storage import find_data_extracao_dirs, list_json_files, read_json_records
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,11 @@ class BronzeValidationError(RuntimeError):
 def validate_source(source, run_date, required_columns=None, min_records=0):
     """Valida os arquivos de uma fonte para uma `data_extracao` específica.
 
+    Busca recursivamente por `data_extracao={run_date}` sob a raiz da fonte —
+    cobre tanto o layout plano (`contratos/`, `unidade_gestora/`) quanto o
+    particionamento por `ano=/mes=` (`empenhos/`, `ordem_bancaria_orcamentaria/`),
+    onde uma mesma `data_extracao` pode se espalhar por várias partições.
+
     `unidade_gestora` é referência completa e pode legitimamente vir vazia em
     bases de teste, mas as demais fontes precisam ter ao menos um arquivo —
     ausência total de arquivo indica que a extração não rodou.
@@ -39,10 +44,12 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
         raise ValueError(f"Fonte '{source}' fora do escopo de validação (esperado: {list(REQUIRED_COLUMNS)})")
     required_columns = required_columns or REQUIRED_COLUMNS[source]
 
-    files = list_json_files(f"{source}/data_extracao={run_date}")
+    partitions = find_data_extracao_dirs(source, run_date)
+    files = [path for partition in partitions for path in list_json_files(partition)]
     if not files:
         raise BronzeValidationError(
-            f"'{source}': nenhum arquivo encontrado para data_extracao={run_date}"
+            f"'{source}': nenhum arquivo encontrado para data_extracao={run_date} "
+            f"(busca recursiva sob '{source}/')"
         )
 
     total_records = 0
@@ -61,8 +68,11 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
             f"'{source}': {total_records} registros para data_extracao={run_date}, esperado >= {min_records}"
         )
 
-    logger.info("Bronze validada [%s]: %s arquivo(s), %s registro(s)", source, len(files), total_records)
-    return {"source": source, "files": len(files), "records": total_records}
+    logger.info(
+        "Bronze validada [%s]: %s partição(ões), %s arquivo(s), %s registro(s)",
+        source, len(partitions), len(files), total_records,
+    )
+    return {"source": source, "partitions": len(partitions), "files": len(files), "records": total_records}
 
 
 def validate_bronze(run_date, min_records_by_source=None):

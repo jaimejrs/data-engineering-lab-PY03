@@ -23,6 +23,17 @@ REQUIRED_COLUMNS = {
     "contratos": {"id", "num_contrato", "valor_contrato", "data_assinatura", "cod_gestora"},
 }
 
+# Mínimo de registros esperado por execução, usado quando o caller não passa
+# `min_records_by_source` explicitamente. Só faz sentido para `unidade_gestora`:
+# é a única fonte recarregada por inteiro a cada execução (~5.011 registros em
+# 19/07/2026), então uma queda brusca é sinal de falha real (conexão perdida,
+# tabela errada). As demais fontes são incrementais por watermark — o volume
+# diário varia livremente e pode ser legitimamente zero (ex: sem contrato
+# assinado num fim de semana), então um mínimo fixo geraria falso positivo.
+DEFAULT_MIN_RECORDS_BY_SOURCE = {
+    "unidade_gestora": 4000,
+}
+
 
 class BronzeValidationError(RuntimeError):
     """Falha de validação de schema ou completude na camada Bronze."""
@@ -61,6 +72,17 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
                 raise BronzeValidationError(
                     f"'{source}' ({relative_path}): colunas obrigatórias ausentes: {sorted(missing)}"
                 )
+            # Coluna presente mas vazia (None ou string em branco) é completude
+            # tão quebrada quanto coluna ausente — ex: dataemissao="" travaria o
+            # particionamento ano=/mes= silenciosamente lá na frente.
+            blank = {
+                column for column in required_columns
+                if record[column] is None or (isinstance(record[column], str) and not record[column].strip())
+            }
+            if blank:
+                raise BronzeValidationError(
+                    f"'{source}' ({relative_path}): colunas obrigatórias vazias: {sorted(blank)}"
+                )
         total_records += len(records)
 
     if total_records < min_records:
@@ -78,10 +100,15 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
 def validate_bronze(run_date, min_records_by_source=None):
     """Valida todas as fontes da Bronze (empenhos, OB, unidade_gestora, contratos) para `run_date`.
 
+    Sem `min_records_by_source` explícito, usa `DEFAULT_MIN_RECORDS_BY_SOURCE`
+    (hoje só `unidade_gestora`, a única fonte recarregada por inteiro a cada
+    execução — ver comentário na constante). Passe um dict para sobrescrever
+    fonte a fonte; fontes omitidas caem no default de `DEFAULT_MIN_RECORDS_BY_SOURCE`.
+
     Levanta `BronzeValidationError` na primeira fonte inválida. Retorna um
     resumo por fonte — seguro para XCom (apenas contagens, nunca registros).
     """
-    min_records_by_source = min_records_by_source or {}
+    min_records_by_source = {**DEFAULT_MIN_RECORDS_BY_SOURCE, **(min_records_by_source or {})}
     return {
         source: validate_source(source, run_date, min_records=min_records_by_source.get(source, 0))
         for source in REQUIRED_COLUMNS

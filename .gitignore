@@ -14,3 +14,6 @@ venv/
 
 # Notebooks
 .ipynb_checkpoints/
+
+# Documentação de trabalho interna — não faz parte dos entregáveis do repositório
+docs/

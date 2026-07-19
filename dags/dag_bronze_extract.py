@@ -23,10 +23,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from dags.common import BRONZE_VALIDATED_DATASET, WATERMARK_VARIABLE  # noqa: E402
 from src.extractors import api_extractor, postgres_extractor  # noqa: E402
 from src.validators.bronze_validator import BronzeValidationError, validate_bronze  # noqa: E402
 
-WATERMARK_VARIABLE = "bronze_last_data_extracao"
 DEFAULT_WATERMARK = "2026-01-01"  # usado apenas na primeira execução, sem histórico prévio
 
 default_args = {
@@ -71,7 +71,7 @@ def bronze_extract():
         except BronzeValidationError as exc:
             raise AirflowException(f"Validação da Bronze falhou para data_extracao={ds}: {exc}") from exc
 
-    @task
+    @task(outlets=[BRONZE_VALIDATED_DATASET])
     def advance_watermark(validation_result):
         ds = get_current_context()["ds"]
         Variable.set(WATERMARK_VARIABLE, ds)

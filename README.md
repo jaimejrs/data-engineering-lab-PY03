@@ -2,7 +2,7 @@
 
 Escopo do Membro 3 (Nara) — extração da API REST e do PostgreSQL de origem para a camada Bronze (arquitetura medalhão)
 
-`Fase 1 — Ingestão` · Última atualização: 16/07/2026 · Responsável: Nara (Membro 3)
+`Fase 1 — Ingestão` · Última atualização: 19/07/2026 · Responsável: Nara (Membro 3)
 
 > Versão estilizada em HTML deste mesmo documento: [`README.html`](README.html) (abra localmente no navegador — o GitHub não renderiza `.html` como página).
 
@@ -36,6 +36,20 @@ projeto-final/
 └── requirements.txt
 ```
 
+## Particionamento da Bronze
+
+Os dados são gravados particionados por **`ano=YYYY/mes=MM`**, derivado da coluna de data de cada fonte (`dataemissao` no Postgres, `data_assinatura` na API) — mesmo esquema que a Silver usa (seção 4.2 do enunciado). Um único chunk/página pode conter registros de meses diferentes; o particionamento acontece registro a registro antes da escrita, não por arquivo inteiro.
+
+```
+/bronze/empenhos/ano=2022/mes=01/data_extracao=2026-07-18/chunk_0001.json
+/bronze/empenhos/ano=2022/mes=02/data_extracao=2026-07-18/chunk_0001.json
+...
+/bronze/contratos/ano=2026/mes=06/data_extracao=2026-07-19/page_0001.json
+/bronze/unidade_gestora/data_extracao=2026-07-18/chunk_0001.json   ← sem partição (tabela de referência, sem coluna de data)
+```
+
+Isso deixa a futura DAG de extração incremental (Membro 1) tocando só na(s) partição(ões) do período corrente, em vez de reprocessar o histórico inteiro. Além disso, `extract_and_save` de ambos os extractors retorna a maior data processada (`max_data_assinatura` na API, `max_dates` por tabela no Postgres) — é esse valor que a DAG deve gravar na Airflow Variable para a próxima execução usar como `--inicio` (item 7.1 do enunciado).
+
 ## Configuração
 
 Copie `.env.example` para `.env` e ajuste os valores. Variáveis relevantes para este módulo:
@@ -57,15 +71,24 @@ Copie `.env.example` para `.env` e ajuste os valores. Variáveis relevantes para
 
 ## Como rodar
 
-```bash
-# Contratos da API (datas em ISO — a conversão para o formato da API é automática)
-python -m src.extractors.api_extractor --inicio 2026-06-01 --fim 2026-06-03
+Os dois extractors já têm como **default a carga histórica completa** — `--inicio 2022-01-10` (data mínima real confirmada no Postgres/API) até a data de hoje. Rodar sem argumentos já baixa tudo:
 
-# Tabelas do PostgreSQL (empenhos, ordem_bancaria_orcamentaria, unidade_gestora)
-python -m src.extractors.postgres_extractor --inicio 2026-06-01 --fim 2026-06-04
+```bash
+# Contratos da API — carga completa por padrão
+python -m src.extractors.api_extractor
+
+# Tabelas do PostgreSQL — carga completa por padrão
+python -m src.extractors.postgres_extractor
 
 # Testes
 python -m pytest tests/ -v
+```
+
+Para uma janela específica (ex: extração incremental manual), passe `--inicio`/`--fim` em ISO (`YYYY-MM-DD`):
+
+```bash
+python -m src.extractors.api_extractor --inicio 2026-06-01 --fim 2026-06-03
+python -m src.extractors.postgres_extractor --inicio 2026-06-01 --fim 2026-06-04
 ```
 
 ## Particularidades importantes (não estão no enunciado oficial)
@@ -82,6 +105,7 @@ python -m pytest tests/ -v
 - Nenhuma tabela tem **PRIMARY KEY** declarada no banco real, mesmo as que o enunciado descreve com PK lógica (ex: `empenhos (PK: id, ano)`). Não assumir unicidade de `id` sem deduplicação a jusante.
 - Colunas de data são `TEXT` (ex: `'2026-06-02 00:00:00.000'`), não `DATE`/`TIMESTAMP`. A comparação lexicográfica com `'YYYY-MM-DD'` funciona porque o prefixo é ISO 8601. A coluna real usada para filtro incremental é `dataemissao` (não `data_empenho`/`data_pagamento` como um rascunho antigo do enunciado sugeria).
 - Cada tabela é gravada em **blocos de até `POSTGRES_EXTRACT_CHUNK_SIZE` linhas** (`chunk_0001.json`, `chunk_0002.json`, ...) em vez de um arquivo único — necessário porque o histórico completo de `empenhos`/`ordem_bancaria_orcamentaria` tem centenas de milhares a milhões de linhas, e um arquivo único ficaria grande demais para escrever de uma vez via WebHDFS.
+- **A engine usa `execution_options={"stream_results": True}`** (cursor server-side do psycopg2). Sem isso, `pd.read_sql(..., chunksize=...)` só corta em blocos do lado do cliente — o Postgres tenta montar o resultado inteiro da query antes de mandar qualquer linha, e a carga histórica completa (~1,4M linhas em `empenhos`) estoura memória no servidor (`psycopg2.DatabaseError: out of memory for query result`) antes mesmo do primeiro chunk chegar.
 
 ### Backend HDFS — atenção ao rodar fora da rede do Datalab
 
@@ -110,11 +134,13 @@ Validadas cruzando os contratos já extraídos contra o banco real (amostra de 7
 
 | Tarefa | Status | Nota |
 |---|---|---|
-| Extrair `empenhos` do PostgreSQL para o HDFS | ✅ Concluída | Validado ponta a ponta no HDFS real (5.313 registros na amostra de teste) |
-| Extrair `ordem_bancaria_orcamentaria` do PostgreSQL para o HDFS | ✅ Concluída | Validado ponta a ponta no HDFS real (7.164 registros na amostra de teste) |
-| Extração paginada da API de contratos | ✅ Concluída | Testada com 740 contratos reais extraídos |
+| Extrair `empenhos` do PostgreSQL para o HDFS | ✅ Concluída | Carga histórica completa validada no HDFS real: 1.376.379 registros (2022-01-10 a 2026-06-04), particionados por ano/mes |
+| Extrair `ordem_bancaria_orcamentaria` do PostgreSQL para o HDFS | ✅ Concluída | Carga histórica completa validada no HDFS real: 1.399.810 registros (2022-01-14 a 2026-06-03), particionados por ano/mes |
+| Extrair `unidade_gestora` do PostgreSQL para o HDFS | ✅ Concluída | 5.011 registros (tabela de referência, sem partição de data) |
+| Extração paginada da API de contratos | ✅ Concluída | Carga histórica completa em andamento/concluída: 209.010 contratos / 2.091 páginas (2022-01-10 a hoje) |
 | Inspecionar `total_pages` e controlar sleep/rate limit | ✅ Concluída | Implementado no mesmo módulo da extração da API |
-| Extração incremental automática (watermark) | ⏳ Pendente | Hoje o período é passado manualmente via `--inicio`/`--fim`; falta persistir a última data processada (ex: Variable do Airflow, a ser criada junto da DAG do Membro 1) |
+| Particionamento da Bronze por `ano=/mes=` | ✅ Concluída | Ver seção "Particionamento da Bronze" acima |
+| Extração incremental automática (watermark) | ⏳ Parcial | Extractors já retornam a última data processada (`max_data_assinatura`/`max_dates`), prontos para XCom; falta a DAG do Membro 1 gravar/ler isso numa Airflow Variable e usar como `--inicio` nas próximas execuções |
 
 ---
 Ceará Transparente — Pipeline de Dados e IA · Documentação de ingestão (Membro 3)

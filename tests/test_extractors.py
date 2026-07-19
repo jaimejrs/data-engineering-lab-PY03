@@ -54,8 +54,13 @@ class TestExtractAndSave:
     def test_writes_each_page_and_returns_counts(self):
         session = MagicMock()
         session.get.side_effect = [
-            _fake_response({"summary": {"total_pages": 2}, "data": [{"id": 1}, {"id": 2}]}),
-            _fake_response({"summary": {"total_pages": 2}, "data": [{"id": 3}]}),
+            _fake_response({"summary": {"total_pages": 2}, "data": [
+                {"id": 1, "data_assinatura": "2026-01-05T00:00:00.000-03:00"},
+                {"id": 2, "data_assinatura": "2026-03-10T00:00:00.000-03:00"},
+            ]}),
+            _fake_response({"summary": {"total_pages": 2}, "data": [
+                {"id": 3, "data_assinatura": "2026-02-01T00:00:00.000-03:00"},
+            ]}),
         ]
 
         with patch.object(api_extractor, "write_json_records") as mock_write, \
@@ -64,8 +69,21 @@ class TestExtractAndSave:
                 patch.object(api_extractor.time, "sleep"):
             result = api_extractor.extract_and_save(run_date="2026-07-15")
 
-        assert result == {"total_pages": 2, "total_records": 3, "run_date": "2026-07-15"}
-        assert mock_write.call_count == 2
+        assert result == {
+            "total_pages": 2,
+            "total_records": 3,
+            "run_date": "2026-07-15",
+            "max_data_assinatura": "2026-03-10",
+        }
+        # página 1 tem registros de jan/2026 e mar/2026 (2 arquivos), página 2 é
+        # só fev/2026 (1 arquivo) — 3 arquivos particionados por ano/mes no total.
+        assert mock_write.call_count == 3
+        written_paths = {call.args[0] for call in mock_write.call_args_list}
+        assert written_paths == {
+            "contratos/ano=2026/mes=01/data_extracao=2026-07-15/page_0001.json",
+            "contratos/ano=2026/mes=03/data_extracao=2026-07-15/page_0001.json",
+            "contratos/ano=2026/mes=02/data_extracao=2026-07-15/page_0001.json",
+        }
 
 
 class TestBuildQuery:
@@ -136,6 +154,35 @@ class TestExtractAndSaveChunked:
         assert mock_write.call_count == 4
         first_call_path = mock_write.call_args_list[0].args[0]
         assert first_call_path == "empenhos/data_extracao=2026-07-15/chunk_0001.json"
+
+    def test_partitions_by_ano_mes_from_date_column(self):
+        chunks_by_table = {
+            "empenhos": [pd.DataFrame({
+                "id": [1, 2, 3],
+                "dataemissao": [
+                    "2022-01-10 00:00:00.000",
+                    "2022-01-20 00:00:00.000",
+                    "2022-02-05 00:00:00.000",
+                ],
+            })],
+            "ordem_bancaria_orcamentaria": [pd.DataFrame({"id": [], "dataemissao": []})],
+            "unidade_gestora": [pd.DataFrame({"id": [100]})],
+        }
+
+        with patch.object(postgres_extractor, "write_json_records") as mock_write, \
+                patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)), \
+                patch.object(postgres_extractor, "create_engine", return_value=MagicMock()):
+            result = postgres_extractor.extract_and_save(run_date="2026-07-15")
+
+        assert result["counts"]["empenhos"] == 3
+        assert result["max_dates"]["empenhos"] == "2022-02-05"
+        assert result["max_dates"]["unidade_gestora"] is None
+
+        written_paths = {call.args[0] for call in mock_write.call_args_list if "empenhos" in call.args[0]}
+        assert written_paths == {
+            "empenhos/ano=2022/mes=01/data_extracao=2026-07-15/chunk_0001.json",
+            "empenhos/ano=2022/mes=02/data_extracao=2026-07-15/chunk_0001.json",
+        }
 
     def test_writes_single_empty_marker_when_no_rows_match(self):
         chunks_by_table = {

@@ -29,6 +29,12 @@ REQUEST_TIMEOUT = int(os.environ.get("CEARA_API_TIMEOUT_SECONDS", "30"))
 SLEEP_BETWEEN_PAGES = float(os.environ.get("CEARA_API_SLEEP_SECONDS", "1.0"))
 MAX_RETRIES = int(os.environ.get("CEARA_API_MAX_RETRIES", "3"))
 
+# Início da carga histórica completa — data mínima de data_assinatura confirmada
+# via API em 2026-07-18 (209.010 contratos / 2.091 páginas até essa data).
+# Usado apenas como default de CLI; a DAG deve sobrescrever --inicio com o valor
+# da Airflow Variable de última extração a partir da segunda execução em diante.
+FULL_LOAD_START_DATE = "2022-01-10"
+
 
 class CearaTransparenteAPIError(RuntimeError):
     """Erro irrecuperável ao consultar a API do Ceará Transparente."""
@@ -115,30 +121,95 @@ def fetch_contratos(data_assinatura_inicio=None, data_assinatura_fim=None, sessi
             session.close()
 
 
+def _max_data_assinatura(records):
+    """Maior data_assinatura (YYYY-MM-DD) entre os registros, ou None se vazio/ausente."""
+    dates = [r["data_assinatura"][:10] for r in records if r.get("data_assinatura")]
+    return max(dates) if dates else None
+
+
+def _partition_records(records, field="data_assinatura"):
+    """Agrupa registros em (ano, mes, sub_records) a partir de `field` (ISO 'YYYY-MM-DD...').
+
+    Uma mesma página pode conter registros de meses diferentes, então o
+    agrupamento é por registro, não por página inteira. Registros sem o campo
+    (não deveria ocorrer na API real) caem no grupo sem partição (ano=None,
+    mes=None).
+    """
+    groups = {}
+    order = []
+    for record in records:
+        value = record.get(field)
+        key = (value[:4], value[5:7]) if value and len(value) >= 7 else (None, None)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(record)
+    for key in order:
+        yield key[0], key[1], groups[key]
+
+
 def extract_and_save(data_assinatura_inicio=None, data_assinatura_fim=None, run_date=None):
     """
-    Executa a extração completa e grava cada página como JSON na Bronze.
+    Executa a extração completa e grava os contratos na Bronze particionados
+    por `ano=YYYY/mes=MM` (a partir de data_assinatura), mesmo esquema que a
+    Silver usa (seção 4.2 do enunciado) — assim a futura DAG de extração
+    incremental só precisa tocar na partição do período corrente.
 
-    Retorna apenas metadados leves (contagens) — seguro para XCom do Airflow,
-    nunca os registros em si.
+    Retorna apenas metadados leves (contagens e a maior data_assinatura vista) —
+    seguro para XCom do Airflow, nunca os registros em si. `max_data_assinatura`
+    é o valor que a DAG deve gravar na Airflow Variable para a próxima extração
+    incremental usar como `--inicio` (item 7.1 do enunciado).
     """
     run_date = run_date or date.today().isoformat()
     total_records = 0
     total_pages = 0
+    max_data_assinatura = None
+    partition_counters = {}
 
     for page, records in fetch_contratos(data_assinatura_inicio, data_assinatura_fim):
-        relative_path = f"contratos/data_extracao={run_date}/page_{page:04d}.json"
-        write_json_records(relative_path, records)
-        total_records += len(records)
         total_pages = page
 
-    return {"total_pages": total_pages, "total_records": total_records, "run_date": run_date}
+        for ano, mes, sub_records in _partition_records(records):
+            key = (ano, mes)
+            partition_counters[key] = partition_counters.get(key, 0) + 1
+            file_index = partition_counters[key]
+
+            if ano and mes:
+                relative_path = (
+                    f"contratos/ano={ano}/mes={mes}/data_extracao={run_date}/page_{file_index:04d}.json"
+                )
+            else:
+                relative_path = f"contratos/data_extracao={run_date}/page_{file_index:04d}.json"
+
+            write_json_records(relative_path, sub_records)
+            total_records += len(sub_records)
+
+        page_max = _max_data_assinatura(records)
+        if page_max and (max_data_assinatura is None or page_max > max_data_assinatura):
+            max_data_assinatura = page_max
+
+    return {
+        "total_pages": total_pages,
+        "total_records": total_records,
+        "run_date": run_date,
+        "max_data_assinatura": max_data_assinatura,
+    }
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Extração de contratos do Ceará Transparente")
-    parser.add_argument("--inicio", dest="data_assinatura_inicio", help="data_assinatura_inicio (YYYY-MM-DD)")
-    parser.add_argument("--fim", dest="data_assinatura_fim", help="data_assinatura_fim (YYYY-MM-DD)")
+    parser.add_argument(
+        "--inicio",
+        dest="data_assinatura_inicio",
+        default=FULL_LOAD_START_DATE,
+        help="data_assinatura_inicio (YYYY-MM-DD). Default: início da carga histórica completa.",
+    )
+    parser.add_argument(
+        "--fim",
+        dest="data_assinatura_fim",
+        default=date.today().isoformat(),
+        help="data_assinatura_fim (YYYY-MM-DD). Default: data de hoje.",
+    )
     return parser.parse_args()
 
 

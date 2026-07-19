@@ -44,6 +44,26 @@ TABLE_DATE_COLUMNS = {
     "unidade_gestora": None,
 }
 
+# Início da carga histórica completa — dataemissao mínima confirmada por
+# consulta direta ao Postgres em 2026-07-18 (empenhos: 2022-01-10, OBO:
+# 2022-01-14; arredondado para baixo). Usado apenas como default de CLI; a DAG
+# deve sobrescrever --inicio com o valor da Airflow Variable de última
+# extração a partir da segunda execução em diante.
+FULL_LOAD_START_DATE = "2022-01-10"
+
+
+def _create_engine():
+    """Cria a engine com cursor server-side habilitado (`stream_results`).
+
+    Sem isso, `pd.read_sql(..., chunksize=...)` só faz o corte em blocos do
+    lado do cliente — o Postgres tenta montar o resultado inteiro da query
+    antes de devolver qualquer linha, o que estoura memória no servidor para
+    tabelas grandes (~1,3M linhas em empenhos/ordem_bancaria_orcamentaria no
+    histórico completo). `stream_results=True` faz o psycopg2 usar um cursor
+    nomeado, e o servidor manda os dados em blocos de verdade.
+    """
+    return create_engine(SOURCE_DB_URL, execution_options={"stream_results": True})
+
 
 def _build_query(table, date_column, data_inicio, data_fim):
     query = f"SELECT * FROM {table}"
@@ -66,7 +86,7 @@ def extract_table(table, data_inicio=None, data_fim=None, engine=None):
         raise ValueError(f"Tabela '{table}' fora do escopo (esperado: {list(TABLE_DATE_COLUMNS)})")
 
     owns_engine = engine is None
-    engine = engine or create_engine(SOURCE_DB_URL)
+    engine = engine or _create_engine()
     try:
         date_column = TABLE_DATE_COLUMNS[table]
         query, params = _build_query(table, date_column, data_inicio, data_fim)
@@ -88,7 +108,7 @@ def extract_table_chunks(table, data_inicio=None, data_fim=None, engine=None, ch
         raise ValueError(f"Tabela '{table}' fora do escopo (esperado: {list(TABLE_DATE_COLUMNS)})")
 
     owns_engine = engine is None
-    engine = engine or create_engine(SOURCE_DB_URL)
+    engine = engine or _create_engine()
     try:
         date_column = TABLE_DATE_COLUMNS[table]
         query, params = _build_query(table, date_column, data_inicio, data_fim)
@@ -99,46 +119,105 @@ def extract_table_chunks(table, data_inicio=None, data_fim=None, engine=None, ch
             engine.dispose()
 
 
+def _partition_by_month(chunk, date_column):
+    """Agrupa um DataFrame em (ano, mes, sub_df) a partir de `date_column`.
+
+    `date_column` é TEXT 'YYYY-MM-DD HH:MM:SS.mmm' — os 7 primeiros caracteres
+    já dão 'YYYY-MM'. Se a coluna não existir no DataFrame (tabela sem data,
+    ex: unidade_gestora) ou vier nula, devolve o chunk inteiro sem partição
+    (ano=None, mes=None), preservando o layout antigo nesses casos.
+    """
+    if not date_column or date_column not in chunk.columns or chunk.empty:
+        yield None, None, chunk
+        return
+
+    ano_mes = chunk[date_column].str.slice(0, 7)
+    for periodo, sub_df in chunk.groupby(ano_mes, dropna=False):
+        if pd.isna(periodo):
+            yield None, None, sub_df
+            continue
+        ano, mes = periodo.split("-")
+        yield ano, mes, sub_df
+
+
 def extract_and_save(data_inicio=None, data_fim=None, run_date=None, engine=None):
     """
-    Extrai todas as tabelas do escopo e grava cada bloco de até CHUNK_SIZE
-    linhas como um JSON separado na Bronze (`chunk_0001.json`, `chunk_0002.json`, ...).
+    Extrai todas as tabelas do escopo e grava os dados na Bronze particionados
+    por `ano=YYYY/mes=MM` (a partir da coluna de data de cada tabela), mesmo
+    esquema que a Silver usa (seção 4.2 do enunciado) — assim a futura DAG de
+    extração incremental só precisa tocar na partição do período corrente.
+    Tabelas sem coluna de data (ex: unidade_gestora) ficam sem essa partição.
 
-    Retorna apenas contagens por tabela — seguro para XCom do Airflow, nunca
-    os DataFrames em si.
+    Retorna apenas contagens e a maior data processada por tabela — seguro para
+    XCom do Airflow, nunca os DataFrames em si. `max_dates` é o valor que a DAG
+    deve gravar na Airflow Variable para a próxima extração incremental usar
+    como `--inicio` (item 7.1 do enunciado).
     """
     run_date = run_date or date.today().isoformat()
     owns_engine = engine is None
-    engine = engine or create_engine(SOURCE_DB_URL)
+    engine = engine or _create_engine()
     counts = {}
+    max_dates = {}
     try:
-        for table in TABLE_DATE_COLUMNS:
+        for table, date_column in TABLE_DATE_COLUMNS.items():
             total_records = 0
-            chunk_index = 0
-            for chunk_index, chunk in enumerate(
-                extract_table_chunks(table, data_inicio, data_fim, engine=engine), start=1
-            ):
-                records = chunk.to_dict(orient="records")
-                relative_path = f"{table}/data_extracao={run_date}/chunk_{chunk_index:04d}.json"
-                write_json_records(relative_path, records)
-                total_records += len(records)
+            table_max_date = None
+            wrote_any = False
+            partition_counters = {}
 
-            if chunk_index == 0:
-                # Nenhum chunk veio (0 linhas no filtro) — grava um marcador vazio
+            for chunk in extract_table_chunks(table, data_inicio, data_fim, engine=engine):
+                for ano, mes, sub_df in _partition_by_month(chunk, date_column):
+                    if sub_df.empty:
+                        continue
+                    wrote_any = True
+                    key = (ano, mes)
+                    partition_counters[key] = partition_counters.get(key, 0) + 1
+                    file_index = partition_counters[key]
+
+                    if ano and mes:
+                        relative_path = (
+                            f"{table}/ano={ano}/mes={mes}/data_extracao={run_date}/"
+                            f"chunk_{file_index:04d}.json"
+                        )
+                    else:
+                        relative_path = f"{table}/data_extracao={run_date}/chunk_{file_index:04d}.json"
+
+                    records = sub_df.to_dict(orient="records")
+                    write_json_records(relative_path, records)
+                    total_records += len(records)
+
+                    if date_column and date_column in sub_df.columns:
+                        chunk_max = sub_df[date_column].max()[:10]
+                        if table_max_date is None or chunk_max > table_max_date:
+                            table_max_date = chunk_max
+
+            if not wrote_any:
+                # Nenhuma linha veio (0 linhas no filtro) — grava um marcador vazio
                 # para deixar explícito que a extração rodou e não encontrou dados.
                 write_json_records(f"{table}/data_extracao={run_date}/chunk_0001.json", [])
 
             counts[table] = total_records
+            max_dates[table] = table_max_date
     finally:
         if owns_engine:
             engine.dispose()
-    return {"run_date": run_date, "counts": counts}
+    return {"run_date": run_date, "counts": counts, "max_dates": max_dates}
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Extração bruta do PostgreSQL para a Bronze")
-    parser.add_argument("--inicio", dest="data_inicio", help="Data inicial do filtro (YYYY-MM-DD)")
-    parser.add_argument("--fim", dest="data_fim", help="Data final do filtro (YYYY-MM-DD)")
+    parser.add_argument(
+        "--inicio",
+        dest="data_inicio",
+        default=FULL_LOAD_START_DATE,
+        help="Data inicial do filtro (YYYY-MM-DD). Default: início da carga histórica completa.",
+    )
+    parser.add_argument(
+        "--fim",
+        dest="data_fim",
+        default=date.today().isoformat(),
+        help="Data final do filtro (YYYY-MM-DD). Default: data de hoje.",
+    )
     return parser.parse_args()
 
 

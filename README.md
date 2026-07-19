@@ -50,6 +50,23 @@ Os dados são gravados particionados por **`ano=YYYY/mes=MM`**, derivado da colu
 
 Isso deixa a futura DAG de extração incremental (Membro 1) tocando só na(s) partição(ões) do período corrente, em vez de reprocessar o histórico inteiro. Além disso, `extract_and_save` de ambos os extractors retorna a maior data processada (`max_data_assinatura` na API, `max_dates` por tabela no Postgres) — é esse valor que a DAG deve gravar na Airflow Variable para a próxima execução usar como `--inicio` (item 7.1 do enunciado).
 
+## Infraestrutura (Docker)
+
+`docker-compose.yml` na raiz sobe o stack completo: PostgreSQL, Hadoop (NameNode +
+DataNode), Airflow (webserver + scheduler, com imagem custom em `docker/airflow/`
+contendo as dependências dos extractors) e Jupyter.
+
+```bash
+docker compose up -d --build
+```
+
+Acesse Airflow em `http://localhost:8080` (usuário/senha criados por `airflow-init`:
+`admin`/`admin`) e o HDFS em `http://localhost:9870`. `SOURCE_POSTGRES_URL` (banco de
+origem) é externo a este compose — ver `.env.example`.
+
+> Se o build falhar com erro de DNS (`Temporary failure in name resolution`) em um host
+> com egress restrito para as redes bridge do Docker, ver `docker/airflow/README.md`.
+
 ## Configuração
 
 Copie `.env.example` para `.env` e ajuste os valores. Variáveis relevantes para este módulo:

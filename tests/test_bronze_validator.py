@@ -35,6 +35,39 @@ class TestValidateSource:
             with pytest.raises(bronze_validator.BronzeValidationError, match="colunas obrigatórias ausentes"):
                 bronze_validator.validate_source("empenhos", "2026-07-15")
 
+    def test_fails_when_required_column_is_none(self):
+        records = [{"id": 1, "ano": 2026, "dataemissao": None}]
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            with pytest.raises(bronze_validator.BronzeValidationError, match="colunas obrigatórias vazias"):
+                bronze_validator.validate_source("empenhos", "2026-07-15")
+
+    def test_fails_when_required_column_is_blank_string(self):
+        records = [{"id": 1, "ano": 2026, "dataemissao": "   "}]
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            with pytest.raises(bronze_validator.BronzeValidationError, match="colunas obrigatórias vazias"):
+                bronze_validator.validate_source("empenhos", "2026-07-15")
+
+    def test_allows_falsy_but_non_blank_values(self):
+        # id=0 e ano=0 são "falsy" em Python mas são valores legítimos — só
+        # None/string em branco devem contar como ausência de completude.
+        records = [{"id": 0, "ano": 0, "dataemissao": "2026-07-15"}]
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            result = bronze_validator.validate_source("empenhos", "2026-07-15")
+
+        assert result == {"source": "empenhos", "partitions": 1, "files": 1, "records": 1}
+
     def test_fails_when_below_minimum_records(self):
         records = [{"id": 1, "ano": 2026, "dataemissao": "2026-07-15"}]
         with patch.object(bronze_validator, "find_data_extracao_dirs",
@@ -123,7 +156,9 @@ class TestValidateBronze:
         with patch.object(bronze_validator, "find_data_extracao_dirs", side_effect=fake_find_dirs), \
                 patch.object(bronze_validator, "list_json_files", side_effect=fake_list), \
                 patch.object(bronze_validator, "read_json_records", side_effect=fake_read):
-            result = bronze_validator.validate_bronze("2026-07-15")
+            # override do mínimo default de unidade_gestora (4000) — este teste
+            # cobre o fluxo genérico entre fontes, não o limiar em si.
+            result = bronze_validator.validate_bronze("2026-07-15", min_records_by_source={"unidade_gestora": 0})
 
         assert set(result.keys()) == {"empenhos", "ordem_bancaria_orcamentaria", "unidade_gestora", "contratos"}
         assert all(v["records"] == 1 for v in result.values())
@@ -132,3 +167,60 @@ class TestValidateBronze:
         with patch.object(bronze_validator, "find_data_extracao_dirs", return_value=[]):
             with pytest.raises(bronze_validator.BronzeValidationError):
                 bronze_validator.validate_bronze("2026-07-15")
+
+    @staticmethod
+    def _valid_records_by_source(unidade_gestora_count):
+        return {
+            "empenhos": [{"id": 1, "ano": 2026, "dataemissao": "2026-07-15"}],
+            "ordem_bancaria_orcamentaria": [{"id": 1, "ano": 2026, "dataemissao": "2026-07-15"}],
+            "unidade_gestora": [{"codigo": str(i), "ano": 2026} for i in range(unidade_gestora_count)],
+            "contratos": [
+                {
+                    "id": 1,
+                    "num_contrato": "123",
+                    "valor_contrato": 1000.0,
+                    "data_assinatura": "15/07/2026",
+                    "cod_gestora": "1",
+                }
+            ],
+        }
+
+    def test_applies_default_min_records_for_unidade_gestora(self):
+        # unidade_gestora é recarregada por inteiro a cada execução — uma queda
+        # pra bem abaixo do esperado (aqui, 3 registros) deve falhar por padrão,
+        # sem o caller precisar saber/passar o limiar manualmente.
+        records_by_source = self._valid_records_by_source(unidade_gestora_count=3)
+
+        def fake_find_dirs(source, run_date):
+            return [f"{source}/data_extracao={run_date}"]
+
+        def fake_list(relative_dir):
+            return [f"{relative_dir}/chunk_0001.json"]
+
+        def fake_read(relative_path):
+            return records_by_source[relative_path.split("/")[0]]
+
+        with patch.object(bronze_validator, "find_data_extracao_dirs", side_effect=fake_find_dirs), \
+                patch.object(bronze_validator, "list_json_files", side_effect=fake_list), \
+                patch.object(bronze_validator, "read_json_records", side_effect=fake_read):
+            with pytest.raises(bronze_validator.BronzeValidationError, match="esperado >= 4000"):
+                bronze_validator.validate_bronze("2026-07-15")
+
+    def test_explicit_min_records_overrides_default(self):
+        records_by_source = self._valid_records_by_source(unidade_gestora_count=3)
+
+        def fake_find_dirs(source, run_date):
+            return [f"{source}/data_extracao={run_date}"]
+
+        def fake_list(relative_dir):
+            return [f"{relative_dir}/chunk_0001.json"]
+
+        def fake_read(relative_path):
+            return records_by_source[relative_path.split("/")[0]]
+
+        with patch.object(bronze_validator, "find_data_extracao_dirs", side_effect=fake_find_dirs), \
+                patch.object(bronze_validator, "list_json_files", side_effect=fake_list), \
+                patch.object(bronze_validator, "read_json_records", side_effect=fake_read):
+            result = bronze_validator.validate_bronze("2026-07-15", min_records_by_source={"unidade_gestora": 1})
+
+        assert result["unidade_gestora"]["records"] == 3

@@ -16,3 +16,7 @@ WATERMARK_VARIABLE = "bronze_last_data_extracao"
 # Emitido quando a Bronze de uma data_extracao é validada — a DAG 2
 # (dag_silver_transform) usa isso como schedule em vez de horário fixo.
 BRONZE_VALIDATED_DATASET = Dataset("bronze://validated")
+
+# Emitido quando a Silver termina de transformar uma data_extracao — a DAG 3
+# (dag_gold_load) usa isso como schedule, mesmo padrão da DAG 1 -> DAG 2.
+SILVER_READY_DATASET = Dataset("silver://ready")

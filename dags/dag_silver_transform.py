@@ -9,6 +9,7 @@ Escopo (Fase 2, Membro 1): orquestra a transformação Bronze -> Silver
 Disparo: por Dataset (`BRONZE_VALIDATED_DATASET`, emitido pela task
 `advance_watermark` da DAG 1) em vez de horário fixo — evita rodar a Silver
 antes da Bronze do dia estar pronta e validada, sem precisar de sensor externo.
+Ao terminar, emite `SILVER_READY_DATASET`, que dispara a DAG 3 (Gold).
 
 Tasks: transform (única task; internamente processa as 4 fontes da Bronze).
 
@@ -28,7 +29,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from dags.common import BRONZE_VALIDATED_DATASET, WATERMARK_VARIABLE  # noqa: E402
+from dags.common import BRONZE_VALIDATED_DATASET, SILVER_READY_DATASET, WATERMARK_VARIABLE  # noqa: E402
 from src.transformers.silver_transformer import transform_bronze_to_silver  # noqa: E402
 
 default_args = {
@@ -51,7 +52,7 @@ default_args = {
 )
 def silver_transform():
 
-    @task
+    @task(outlets=[SILVER_READY_DATASET])
     def transform():
         # Mesmo valor de data_extracao que a DAG 1 acabou de validar e gravar
         # em advance_watermark — não usa `ds` do próprio disparo por Dataset,

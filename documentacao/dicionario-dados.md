@@ -1,13 +1,21 @@
 # Dicionário de Dados
 
-Última atualização: 18/07/2026.
+Última atualização: 19/07/2026.
 
-Duas seções, com status diferente:
+Três seções, com status diferente:
 
 - **Bronze** — schema real, confirmado contra a fonte (arquivos gravados no HDFS/local hoje).
-- **Gold (DW)** — **proposta** baseada na seção 4.2 do `Trabalho Final.pdf`. As tabelas
-  ainda **não existem** (dependem das tarefas 15/16 do Carlos — ver
-  [`checklist`](../docs/checklist.md) interno). Marcadas como `[planejado]`.
+- **Mapeamento Bronze → Gold e regras de normalização** — **proposta** (tarefa 10, adiantada por
+  Jaime em 19/07 para destravar a Fase 2 — ver [`checklist`](../docs/checklist.md) interno).
+  Marcada como `[proposto — a validar]`: são regras iniciais grounded no schema real já
+  documentado abaixo, mas a decisão final é do Carlos/Fernanda (donos da tarefa 10) antes de
+  virar código nas tarefas 13/14/15.
+- **Gold (DW)** — **implementado e carregado com dado real** em 19/07/2026 (tarefas 15/16,
+  reatribuídas a Jaime na redistribuição do dia — ver [`checklist`](../docs/checklist.md)
+  interno). DDL em [`sql/ddl_dw.sql`](../sql/ddl_dw.sql), rodando em Postgres dedicado
+  (`datalab_postgres_dw`, porta 5434). Contagens reais da carga completa: `dim_credor` 10.612,
+  `dim_orgao` 5.011, `dim_modalidade` 21, `dim_tempo` 1.449, `fato_contrato` 215.402,
+  `fato_empenho` 1.376.379.
 
 ---
 
@@ -59,63 +67,152 @@ efetivo ao credor (dados bancários).
 Tabela de referência — extraída por completo a cada execução (sem filtro de data).
 Versionada por `ano`: **sempre juntar por `(codigo, ano)`**, nunca só por `codigo`.
 
+| Campo | Tipo na fonte | Observação |
+|---|---|---|
+| `codigo`, `ano` | `text`, `integer` | Chave de negócio (versionada por ano) |
+| `titulo` | `text` | Nome do órgão |
+| `sigla` | `text` | Sigla |
+| `cnpj` | `text` | CNPJ do órgão |
+| `tipoadministracao`, `tipoug` | `text` | Classificação administrativa |
+| `codigopoder`, `nomepoder` | `text` | Poder (Executivo/Legislativo/Judiciário) |
+| `codigouf`, `nomemunicipio` | `text` | Localização |
+
 **Colunas mínimas exigidas:** `codigo`, `ano`.
+
+### `empenhos` / `ordem_bancaria_orcamentaria` — colunas confirmadas adicionais
+
+Confirmado contra `information_schema.columns` do Postgres de origem em 19/07/2026 (destravou
+as tarefas 15/16/17): `valor` (`numeric`) é o campo de valor do empenho, `modalidade` (`text`) a
+classificação — nenhum dos dois tinha sido confirmado 1:1 até então.
 
 ---
 
-## Camada Gold — Data Warehouse `[planejado — pendente tarefas 15/16]`
+## Mapeamento Bronze → Gold e regras de normalização `[proposto — a validar]`
 
-Modelo dimensional (estrela) proposto em `Trabalho Final.pdf` §4.2 (DAG 3 — Carga Gold).
-Nenhuma dessas tabelas existe hoje no PostgreSQL DW; layout final e tipos exatos ficam
-a cargo de quem implementar as tarefas 15 (modelagem) e 16 (DDL).
+Cobre o que faltava pra tarefa 10 destravar as tarefas 13 (conversão de datas/normalização
+CNPJ-CPF) e 15 (modelagem do DW): schema real já estava documentado acima, mas não havia
+regra de transformação explícita nem de-para campo a campo.
 
-### `dim_credor` (SCD2)
+### Datas — formato-alvo `DATE` (ISO 8601, sem hora)
 
-| Coluna proposta | Tipo | Descrição |
+| Fonte | Formato original | Regra de conversão |
 |---|---|---|
-| `sk_credor` | `BIGSERIAL` (PK) | Surrogate key |
-| `cnpj_cpf` | `VARCHAR` | Chave de negócio |
-| `nome` | `VARCHAR` | Razão social |
-| `tipo` | `VARCHAR` | PJ / PF |
-| `historico_infringement` | `BOOLEAN`/`INT` | Histórico de infração (`infringement_status > 0`) |
-| `valido_de`, `valido_ate`, `versao_atual` | `TIMESTAMP`/`BOOLEAN` | Controle SCD2 — rastreia mudança de razão social |
+| API (`data_assinatura`, `data_inicio`, `data_termino`, `data_publicacao_portal`, `data_rescisao`) | `DD/MM/YYYY` (string) | `datetime.strptime(v, "%d/%m/%Y").date()` — mesma conversão que `api_extractor` já faz internamente para filtrar por `--inicio`/`--fim` (ver `README.md`), só que persistida na Silver em vez de descartada após o filtro |
+| Postgres (`dataemissao`) | `TEXT` `'YYYY-MM-DD HH:MM:SS.mmm'` | Cortar nos 10 primeiros caracteres (`v[:10]`) e converter pra `DATE` — já é prefixo ISO 8601, não precisa parse de formato, só cast de tipo |
+| Campos vazios/`None` (ex: `data_rescisao` em contrato não rescindido) | — | Manter `NULL` — não é dado ausente por erro, é ausência legítima (contrato ativo) |
 
-### `dim_orgao`
+`dim_tempo` é alimentada pelo conjunto de datas distintas resultante (não por uma fonte só).
 
-| Coluna proposta | Tipo | Descrição |
+### CNPJ/CPF — formato-alvo: apenas dígitos (sem máscara), `VARCHAR`
+
+| Campo origem | Observação | Regra |
 |---|---|---|
-| `sk_orgao` | `BIGSERIAL` (PK) | Surrogate key |
-| `codigo`, `ano` | — | Chave de negócio (`unidade_gestora`) |
-| `nome`, `cnpj`, `tipo_administracao`, `esfera` | — | Atributos descritivos |
+| `contratos.plain_cpf_cnpj_financiador` | API já retorna sem máscara | Usar direto como candidato principal |
+| `contratos.cpf_cnpj_financiador` | API retorna com máscara (`000.000.000-00` / `00.000.000/0000-00`) | Fallback só se `plain_...` vier vazio: `re.sub(r"\D", "", v)` |
+| `empenhos.codigocredor` | Já é o campo de junção usado hoje (~96% match com o financiador do contrato) | Mesma normalização (só dígitos) antes de comparar/juntar |
+| Resultado com 11 dígitos | CPF | `dim_credor.tipo = "PF"` |
+| Resultado com 14 dígitos | CNPJ | `dim_credor.tipo = "PJ"` |
+| Resultado com outro tamanho após normalização | Dado inconsistente na fonte | **Não descartar a linha** — gravar `cnpj_cpf` normalizado mesmo assim e marcar `tipo = "INVALIDO"` para não perder o fato financeiro; validação de dígito verificador fica como melhoria futura, não bloqueante pra Fase 2 |
 
-### `dim_modalidade`
+### Deduplicação — `empenhos` / `ordem_bancaria_orcamentaria` / `contratos`
 
-| Coluna proposta | Tipo | Descrição |
-|---|---|---|
-| `sk_modalidade` | `BIGSERIAL` (PK) | Surrogate key |
-| `descricao_modalidade` | `VARCHAR` | Pregão eletrônico, dispensa, inexigibilidade etc. |
+Nenhuma das duas primeiras tem PK real no banco de origem (ver seção Bronze acima). Chave
+lógica: **`(id, ano)`** para `empenhos`/`ordem_bancaria_orcamentaria`, **`id`** para
+`contratos` (esse tem id único de verdade na API). `silver_transformer.py` dedupa dentro de
+uma mesma execução (`data_extracao`).
 
-### `dim_tempo`
+**Achado real (19/07/2026, carga do DW):** dedup *entre* execuções diferentes da Silver não
+existia — quando duas execuções da DAG 2 processam janelas incrementais sobrepostas (ex: um
+backfill manual reprocessando um período já coberto por outra execução), o mesmo registro
+aparece duas vezes no histórico consolidado da Silver. Isso quebrou a carga do DW
+(`psycopg2.errors.CardinalityViolation: ON CONFLICT DO UPDATE command cannot affect row a
+second time`) até o `dw_loader.py` passar a dedupar de novo por `(id, ano)`/`id` antes de
+montar os fatos. **Ainda em aberto:** a Silver em si não resolve isso — cada execução nova
+continua podendo gravar registros repetidos; o dedup de fato só acontece na borda do DW.
+Também descoberto na mesma carga: ~120 mil datas de `contratos` (campos além de
+`data_assinatura`, ex. `data_termino`/`data_rescisao`) vêm em `ISO 8601` com timezone
+(`2026-02-22T00:00:00.000-03:00`) em vez de `DD/MM/YYYY` — `silver_transformer.py` já trata
+sem quebrar (mantém valor original com aviso), mas essas datas específicas não ficam
+normalizadas.
 
-| Coluna proposta | Tipo | Descrição |
-|---|---|---|
-| `sk_tempo` | `BIGSERIAL` (PK) | Surrogate key |
-| `data`, `ano`, `trimestre`, `mes`, `dia_semana` | `DATE`/`INT` | Atributos de data completa |
+### De-para por tabela Gold
 
-### `fato_contrato` (particionada por ano)
+Ver coluna **"Origem (Bronze)"** adicionada em cada tabela da seção Gold abaixo.
 
-| Coluna proposta | Tipo | Descrição |
-|---|---|---|
-| `sk_credor`, `sk_orgao`, `sk_modalidade`, `sk_tempo` | FK | Chaves das dimensões |
-| `valor_contrato`, `valor_pago`, `valor_empenhado` | `NUMERIC` | Valores financeiros |
-| `status` | `VARCHAR` | `descricao_situacao` |
-| `flag_emergency` | `BOOLEAN` | Contrato de emergência |
-| `score_anomalia` | `NUMERIC(0-1)` | Preenchido pelo Modelo 1 (Isolation Forest) — Fase 3 |
+---
 
-### `fato_empenho`
+## Camada Gold — Data Warehouse `[implementado — schema real, sql/ddl_dw.sql]`
 
-| Coluna proposta | Tipo | Descrição |
-|---|---|---|
-| `sk_orgao`, `sk_tempo` | FK | Chaves das dimensões |
-| `cod_contrato` | — | Liga com `fato_contrato` |
-| `valor`, `modalidade` | — | Valor do empenho e classificação |
+Modelo dimensional (estrela), schema `dw` no Postgres `datalab_postgres_dw` (porta 5434,
+container dedicado). DDL completo em [`sql/ddl_dw.sql`](../sql/ddl_dw.sql); carga via
+`src/loaders/dw_loader.py` (`python -m src.loaders.dw_loader`), idempotente (upsert por chave
+de negócio). Contagens da carga completa (19/07/2026) entre parênteses.
+
+### `dim_credor` (SCD2) — 10.612 linhas
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_credor` | `BIGSERIAL` (PK) | Surrogate key | gerado |
+| `cnpj_cpf` | `VARCHAR(14)` | Chave de negócio | `contratos.plain_cpf_cnpj_financiador` (fallback: `cpf_cnpj_financiador` normalizado) |
+| `nome` | `VARCHAR(255)` | Razão social | `contratos.descricao_nome_credor` |
+| `tipo` | `VARCHAR(10)` | `PF`/`PJ`/`INVALIDO` | derivado do tamanho do `cnpj_cpf` normalizado |
+| `historico_infringement` | `BOOLEAN` | Histórico de infração (`infringement_status > 0`) | `contratos.infringement_status` |
+| `valido_de`, `valido_ate`, `versao_atual` | `TIMESTAMP`/`TIMESTAMP`/`BOOLEAN` | Controle SCD2 | gerado |
+
+**Limitação conhecida:** o loader hoje só insere uma versão nova quando não existe nenhuma
+"atual" pro mesmo `cnpj_cpf` — não detecta troca de razão social pra fechar a versão antiga
+(`valido_ate`) e abrir uma nova automaticamente. Melhoria futura, não bloqueante.
+
+### `dim_orgao` — 5.011 linhas
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_orgao` | `BIGSERIAL` (PK) | Surrogate key | gerado |
+| `codigo`, `ano` | `VARCHAR`, `INT` | Chave de negócio | `unidade_gestora.codigo`, `.ano` |
+| `nome`, `sigla`, `cnpj` | `VARCHAR` | Identificação | `unidade_gestora.titulo`, `.sigla`, `.cnpj` |
+| `tipo_administracao`, `tipo_ug` | `VARCHAR` | Classificação | `unidade_gestora.tipoadministracao`, `.tipoug` |
+| `codigo_poder`, `nome_poder` | `VARCHAR` | Poder (subst. o `esfera` da proposta original — sem correspondência real na fonte) | `unidade_gestora.codigopoder`, `.nomepoder` |
+| `codigo_uf`, `nome_municipio` | `VARCHAR` | Localização | `unidade_gestora.codigouf`, `.nomemunicipio` |
+
+### `dim_modalidade` — 21 linhas
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_modalidade` | `BIGSERIAL` (PK) | Surrogate key | gerado |
+| `descricao_modalidade` | `VARCHAR` UNIQUE | Pregão eletrônico, dispensa, inexigibilidade etc. | `contratos.descricao_modalidade` |
+
+### `dim_tempo` — 1.449 linhas
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_tempo` | `BIGSERIAL` (PK) | Surrogate key | gerado |
+| `data` | `DATE` UNIQUE | — | conjunto de datas normalizadas de `contratos.data_assinatura` + `empenhos.dataemissao` |
+| `ano`, `trimestre`, `mes`, `dia_semana` | `INT` | Derivados de `data` | calculado |
+
+### `fato_contrato` — 215.402 linhas, particionada por `ano` (RANGE, 2022–2026 + `DEFAULT`)
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_fato_contrato`, `ano` | `BIGSERIAL`, `INT` | PK composta (exigência do Postgres p/ tabela particionada) | gerado / ano de `data_assinatura` |
+| `id_contrato_origem` | `VARCHAR` | Chave de negócio p/ recarga idempotente (`UNIQUE` com `ano`) | `contratos.id` |
+| `sk_credor`, `sk_orgao`, `sk_modalidade`, `sk_tempo` | `BIGINT` FK | Chaves das dimensões | lookup pelas chaves de negócio |
+| `valor_contrato`, `valor_pago`, `valor_empenhado` | `NUMERIC(15,2)` | Valores financeiros | `contratos.valor_contrato`, `calculated_valor_pago`, `calculated_valor_empenhado` — API já calcula essas duas últimas, preferidas em vez de recalcular via join fraco com `empenhos`/`ordem_bancaria_orcamentaria` |
+| `status` | `VARCHAR` | `descricao_situacao` | `contratos.descricao_situacao` |
+| `flag_emergency` | `BOOLEAN` | Contrato de emergência | `contratos.emergency` |
+| `score_anomalia` | `NUMERIC(5,4)` | `NULL` até a Fase 3 | gravado pela tarefa 24 |
+
+Cobertura real do join: 211/215.402 sem `sk_orgao` (0,1%), 11/215.402 sem `sk_credor` — resto
+100% resolvido.
+
+### `fato_empenho` — 1.376.379 linhas (sem particionamento — não exigido pelo checklist)
+
+| Coluna | Tipo | Descrição | Origem (Bronze) |
+|---|---|---|---|
+| `sk_fato_empenho` | `BIGSERIAL` (PK) | Surrogate key | gerado |
+| `id_empenho_origem`, `ano` | `BIGINT`, `INT` | Chave de negócio (`UNIQUE` composta — `empenhos` não tem PK real, `id` sozinho se repete entre anos) | `empenhos.id`, `.ano` |
+| `sk_orgao`, `sk_tempo` | `BIGINT` FK | Chaves das dimensões | lookup por `(codigoug, ano)` → `dim_orgao`, `dataemissao` → `dim_tempo` |
+| `cod_contrato` | `VARCHAR` | Liga com `fato_contrato` (best-effort) | `empenhos.codprocesso` — **atenção:** só ~7,5% de match real contra `contratos.num_spu` (ver README); sem FK obrigatória |
+| `valor` | `NUMERIC(15,2)` | Valor do empenho | `empenhos.valor` (confirmado real, `numeric`) |
+| `modalidade` | `VARCHAR` | Classificação | `empenhos.modalidade` (confirmado real, `text`) |
+
+Cobertura real do join: 0 registros sem `sk_orgao` — 100% resolvido.

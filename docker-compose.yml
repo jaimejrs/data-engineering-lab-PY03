@@ -17,6 +17,24 @@ services:
       retries: 5
       start_period: 5s
 
+  postgres_dw:
+    image: postgres:15
+    container_name: datalab_postgres_dw
+    environment:
+      POSTGRES_USER: dw_user
+      POSTGRES_PASSWORD: dw_password
+      POSTGRES_DB: ceara_dw
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_dw_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dw_user -d ceara_dw"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: datalab_hadoop_namenode
@@ -53,6 +71,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres_dw:
+        condition: service_healthy
     environment: &airflow-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://dlab:d123@postgres:5432/datalab
@@ -60,8 +80,11 @@ services:
       SOURCE_POSTGRES_URL: ${SOURCE_POSTGRES_URL:-postgresql://usuario:senha@host:5432/ceara_transparente}
       BRONZE_STORAGE_BACKEND: hdfs
       BRONZE_BASE_PATH: /bronze
+      SILVER_STORAGE_BACKEND: hdfs
+      SILVER_BASE_PATH: /silver
       HDFS_WEBHDFS_URL: http://namenode:9870
       HDFS_USER: root
+      DW_POSTGRES_URL: postgresql://dw_user:dw_password@postgres_dw:5432/ceara_dw
     entrypoint: /bin/bash
     command:
       - -c
@@ -138,6 +161,7 @@ services:
 
 volumes:
   postgres_data:
+  postgres_dw_data:
   hadoop_namenode:
   hadoop_datanode:
   airflow_logs:

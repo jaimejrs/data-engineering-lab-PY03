@@ -45,3 +45,60 @@ def write_parquet_records(relative_path: str, records: list) -> str:
 
     logger.info("Silver [%s]: %s (%s registros)", SILVER_BACKEND, full_path, len(records))
     return full_path
+
+
+def find_parquet_files(relative_root: str) -> list:
+    """Lista recursivamente todos os `.parquet` sob `relative_root`, em qualquer partição.
+
+    Usado pela carga do DW (Gold): ao contrário da Bronze/Silver por dia
+    (`data_extracao`), o DW é cumulativo — precisa ler todo o histórico já
+    persistido na Silver, não só uma execução.
+    """
+    full_root = f"{SILVER_BASE_PATH.rstrip('/')}/{relative_root.strip('/')}"
+    base_prefix = SILVER_BASE_PATH.replace("\\", "/").rstrip("/") + "/"
+
+    if SILVER_BACKEND == "hdfs":
+        client = _get_hdfs_client()
+        try:
+            paths = [
+                f"{dirpath}/{name}"
+                for dirpath, _dirs, files in client.walk(full_root)
+                for name in files
+                if name.endswith(".parquet")
+            ]
+        except Exception:
+            return []
+    else:
+        if not os.path.isdir(full_root):
+            return []
+        paths = [
+            os.path.join(dirpath, name).replace(os.sep, "/")
+            for dirpath, _dirs, files in os.walk(full_root)
+            for name in files
+            if name.endswith(".parquet")
+        ]
+
+    return sorted(
+        path[len(base_prefix):] if path.startswith(base_prefix) else path.lstrip("/")
+        for path in paths
+    )
+
+
+def read_parquet_df(relative_path: str) -> pd.DataFrame:
+    """Lê de volta um Parquet gravado na Silver por `write_parquet_records`."""
+    full_path = f"{SILVER_BASE_PATH.rstrip('/')}/{relative_path.lstrip('/')}"
+
+    if SILVER_BACKEND == "hdfs":
+        client = _get_hdfs_client()
+        with client.read(full_path) as reader:
+            return pd.read_parquet(io.BytesIO(reader.read()))
+
+    return pd.read_parquet(full_path)
+
+
+def read_source(source: str) -> pd.DataFrame:
+    """Concatena todo o histórico Parquet já persistido de uma fonte da Silver."""
+    files = find_parquet_files(source)
+    if not files:
+        return pd.DataFrame()
+    return pd.concat([read_parquet_df(path) for path in files], ignore_index=True)

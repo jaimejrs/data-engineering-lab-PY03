@@ -5,3 +5,12 @@ pandas==2.1.4
 pyarrow==15.0.2
 hdfs==2.7.3
 python-dotenv==1.0.1
+
+# Cliente Spark para o SparkSubmitOperator (DAG 2 submete em client mode).
+# O wheel do pyspark já traz spark-submit + os jars do Spark 3.5.3 — evita baixar
+# o tarball do Spark. Versão casada com a imagem do cluster (docker/spark).
+apache-airflow-providers-apache-spark==4.8.1
+pyspark==3.5.3
+
+# DAG 3 dispara o dbt (imagem datalab-dbt) via DockerOperator.
+apache-airflow-providers-docker==3.12.0

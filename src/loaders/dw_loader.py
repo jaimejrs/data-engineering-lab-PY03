@@ -235,14 +235,21 @@ def load_fato_empenho(engine, empenhos_enriched: pd.DataFrame, dim_orgao, dim_te
     return len(fato)
 
 
-def load_dw():
-    """Lê todo o histórico da Silver e carrega dimensões + fatos no DW (Gold)."""
+def load_dw(read_source_fn=read_source):
+    """Lê todo o histórico da Silver e carrega dimensões + fatos no DW (Gold).
+
+    `read_source_fn(source) -> pd.DataFrame` é injetável: o default lê os Parquet
+    da Silver (backend `local`/dev, via `silver_storage.read_source`); o job
+    PySpark (`src/spark_jobs/gold_job.py`) injeta um reader que lê as tabelas
+    Iceberg no HDFS via Spark e devolve pandas — mantendo esta orquestração
+    (ordem dimensões -> fatos, idempotência) como fonte única de verdade.
+    """
     engine = _get_engine()
     apply_ddl(engine)
 
-    contratos = read_source("contratos")
-    unidade_gestora = read_source("unidade_gestora")
-    empenhos = read_source("empenhos")
+    contratos = read_source_fn("contratos")
+    unidade_gestora = read_source_fn("unidade_gestora")
+    empenhos = read_source_fn("empenhos")
 
     dim_credor = load_dim_credor(engine, contratos)
     dim_orgao = load_dim_orgao(engine, unidade_gestora)

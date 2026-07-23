@@ -95,12 +95,18 @@ def _non_empty(col):
 
 def normalize(df, source: str):
     """Normaliza datas (e CNPJ/CPF em contratos), reusando as regras de `rules.py`."""
-    # DD/MM/YYYY -> YYYY-MM-DD apenas quando casa o formato exato; senão mantém
-    # o valor original (regexp ancorado não altera o que não casa), preservando
-    # a semântica de rules.normalize_api_date sem depender do time parser do Spark.
+    # Normaliza datas da API para ISO 'YYYY-MM-DD':
+    #  1. DD/MM/YYYY -> YYYY-MM-DD (regexp ancorado; só altera o que casa exato);
+    #  2. valores já ISO com hora/timezone (ex: '2026-07-21T00:00:00.000-03:00')
+    #     são cortados para os 10 primeiros chars -> '2026-07-21'.
+    # O que não casar nenhum dos dois é mantido como veio (não quebra a carga).
     for field in API_DATE_FIELDS:
         if field in df.columns:
-            df = df.withColumn(field, F.regexp_replace(F.col(field), r"^(\d{2})/(\d{2})/(\d{4})$", r"$3-$2-$1"))
+            converted = F.regexp_replace(F.col(field), r"^(\d{2})/(\d{2})/(\d{4})$", r"$3-$2-$1")
+            df = df.withColumn(
+                field,
+                F.when(converted.rlike(r"^\d{4}-\d{2}-\d{2}"), F.substring(converted, 1, 10)).otherwise(converted),
+            )
     # TEXT 'YYYY-MM-DD HH:MM:SS.mmm' -> corte dos 10 primeiros chars (já ISO).
     for field in POSTGRES_DATE_FIELDS:
         if field in df.columns:

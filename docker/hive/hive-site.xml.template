@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <!--
-  Config do Hive Metastore usado como catálogo Iceberg.
-  Backing store: Postgres (serviço `postgres`, DB `metastore`, usuário `hive`).
-  Warehouse: mesmo diretório HDFS que o catálogo Iceberg do Spark usa.
+  Template do Hive Metastore. Tokens substituídos no build (docker/hive/Dockerfile,
+  via ARG): __HDFS_HOST__ (namenode|hadoop) e __METASTORE_DB_HOST__ (Postgres do HMS).
 -->
 <configuration>
   <property>
     <name>javax.jdo.option.ConnectionURL</name>
-    <value>jdbc:postgresql://postgres:5432/metastore</value>
+    <value>jdbc:postgresql://__METASTORE_DB_HOST__:5432/metastore</value>
   </property>
   <property>
     <name>javax.jdo.option.ConnectionDriverName</name>
@@ -24,7 +23,7 @@
   </property>
   <property>
     <name>hive.metastore.warehouse.dir</name>
-    <value>hdfs://namenode:9000/warehouse</value>
+    <value>hdfs://__HDFS_HOST__:9000/warehouse</value>
   </property>
   <property>
     <name>metastore.thrift.port</name>
@@ -32,9 +31,8 @@
   </property>
   <property>
     <name>fs.defaultFS</name>
-    <value>hdfs://namenode:9000</value>
+    <value>hdfs://__HDFS_HOST__:9000</value>
   </property>
-  <!-- Sem auth de notificação de eventos (lab); evita exigir tabelas extras. -->
   <property>
     <name>hive.metastore.event.db.notification.api.auth</name>
     <value>false</value>

@@ -29,7 +29,7 @@ select
     cast(null as decimal(5, 4)) as score_anomalia
 from contratos
 left join {{ ref('dim_credor') }} dc
-    on dc.cnpj_cpf = contratos.cnpj_cpf_normalizado
+    on dc.cnpj_cpf = contratos.cnpj_cpf_normalizado and dc.versao_atual
 left join {{ ref('dim_orgao') }} dorg
     on dorg.codigo = cast(contratos.cod_gestora as varchar)
     and dorg.ano = cast(contratos.ano_calc as integer)

@@ -27,4 +27,4 @@ left join {{ ref('dim_orgao') }} dorg
     on dorg.codigo = cast(empenhos.codigoug as varchar)
     and dorg.ano = cast(empenhos.ano as integer)
 left join {{ ref('dim_tempo') }} dtmp
-    on dtmp.data = try(cast(empenhos.dataemissao as date))
+    on dtmp.data = try(cast(substr(empenhos.dataemissao, 1, 10) as date))

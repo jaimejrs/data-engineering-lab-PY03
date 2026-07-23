@@ -48,34 +48,40 @@ PARTITION_COLS = {
 }
 
 
-def _path_exists(spark, path: str) -> bool:
+def _run_date_dirs(spark, source: str, run_date: str) -> list:
+    """Diretórios `data_extracao=<run_date>` de `source`, via glob no HDFS.
+
+    Cobre o layout plano (`contratos`/`unidade_gestora`: `data_extracao=` direto)
+    e o aninhado por `ano=/mes=` (`empenhos`/`ordem_bancaria_orcamentaria`). Ler
+    só a(s) partição(ões) do dia — em vez de `recursiveFileLookup` na fonte
+    inteira e filtrar depois — evita varrer todo o histórico (empenhos ~1,38M/7GB)
+    a cada execução, o que estourava a memória.
+    """
+    base = f"{BRONZE_BASE_PATH.rstrip('/')}/{source}"
     jvm = spark._jvm
-    hadoop_conf = spark._jsc.hadoopConfiguration()
-    hpath = jvm.org.apache.hadoop.fs.Path(path)
-    return hpath.getFileSystem(hadoop_conf).exists(hpath)
+    hconf = spark._jsc.hadoopConfiguration()
+    fs = jvm.org.apache.hadoop.fs.FileSystem.get(jvm.java.net.URI.create(base), hconf)
+    dirs = []
+    for pattern in (f"{base}/data_extracao={run_date}", f"{base}/*/*/data_extracao={run_date}"):
+        statuses = fs.globStatus(jvm.org.apache.hadoop.fs.Path(pattern))
+        if statuses:
+            dirs.extend(st.getPath().toString() for st in statuses)
+    return dirs
 
 
 def read_bronze(spark, source: str, run_date: str):
     """Lê os JSON da Bronze de `source` para `run_date`, ou None se não houver dados.
 
-    Os arquivos Bronze são *arrays* JSON (`json.dumps(records)`) — por isso
-    `multiline=true`. `recursiveFileLookup=true` cobre tanto o layout plano
-    (contratos/unidade_gestora) quanto o aninhado por ano=/mes= (empenhos/OB),
-    mas desliga a descoberta de partição — então o recorte por `data_extracao`
-    é feito pelo caminho do arquivo (`input_file_name`), replicando a semântica
-    de `storage.find_data_extracao_dirs`.
+    Os arquivos Bronze são *arrays* JSON (`json.dumps(records)`) — daí
+    `multiline=true`. Lê apenas os diretórios `data_extracao=<run_date>` (ver
+    `_run_date_dirs`), não a fonte inteira.
     """
-    path = f"{BRONZE_BASE_PATH.rstrip('/')}/{source}"
-    if not _path_exists(spark, path):
-        logger.warning("Bronze inexistente para '%s' em %s — pulando", source, path)
+    dirs = _run_date_dirs(spark, source, run_date)
+    if not dirs:
+        logger.warning("Bronze sem partição data_extracao=%s para '%s' — pulando", run_date, source)
         return None
 
-    df = (
-        spark.read.option("multiline", "true")
-        .option("recursiveFileLookup", "true")
-        .json(path)
-        .filter(F.input_file_name().contains(f"data_extracao={run_date}"))
-    )
+    df = spark.read.option("multiline", "true").json(dirs)
     if not df.take(1):
         logger.warning("Nenhum registro em '%s' para data_extracao=%s", source, run_date)
         return None

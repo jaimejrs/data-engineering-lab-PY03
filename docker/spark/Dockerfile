@@ -2,35 +2,24 @@
 #
 # Base: distribuição oficial do Spark 3.5.x (Scala 2.12, Java 17), que já traz os
 # jars do client Hive 2.3.9 (necessários para o Iceberg HiveCatalog) e o client
-# Hadoop 3.3 (compatível com o servidor HDFS 3.2.1 dos serviços bde2020/hadoop).
+# Hadoop 3.3 (compatível com HDFS 3.x).
 #
-# Egress: o host só tem saída IPv6 (ver documentacao/workaround-egress-ipv4-api.md).
-# O docker-compose builda esta imagem com `network: host`, então o curl abaixo usa a
-# saída IPv6 do host. Maven Central (Fastly) atende por IPv6. Fallback offline: se o
-# curl falhar, pré-baixe os dois jars para docker/spark/jars/ e troque o curl por COPY.
+# Jars via `ADD <url>`: o BuildKit baixa no build (a imagem base NÃO tem curl).
+# Egress: o build usa `network: host` (host só tem saída IPv6; Maven atende IPv6 —
+# ver documentacao/workaround-egress-ipv4-api.md).
 FROM apache/spark:3.5.3
 
 USER root
 
-ARG ICEBERG_VERSION=1.6.1
-ARG POSTGRES_JDBC_VERSION=42.7.4
-ENV MAVEN=https://repo1.maven.org/maven2
+# Iceberg runtime (fat jar, inclui suporte a HiveCatalog) + driver JDBC do Postgres.
+ADD https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar /opt/spark/jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar
+ADD https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar /opt/spark/jars/postgresql-42.7.4.jar
+# ADD grava 0600/root; os jars precisam ser legíveis pelo usuário `spark` em runtime.
+RUN chmod 644 /opt/spark/jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar /opt/spark/jars/postgresql-42.7.4.jar
 
-# Jars: Iceberg runtime (fat jar, inclui suporte a HiveCatalog) + driver JDBC do
-# Postgres (usado pelo gold_job para escrever no DW, e útil ao HMS).
-RUN curl -fSL \
-      "${MAVEN}/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/${ICEBERG_VERSION}/iceberg-spark-runtime-3.5_2.12-${ICEBERG_VERSION}.jar" \
-      -o /opt/spark/jars/iceberg-spark-runtime-3.5_2.12-${ICEBERG_VERSION}.jar && \
-    curl -fSL \
-      "${MAVEN}/org/postgresql/postgresql/${POSTGRES_JDBC_VERSION}/postgresql-${POSTGRES_JDBC_VERSION}.jar" \
-      -o /opt/spark/jars/postgresql-${POSTGRES_JDBC_VERSION}.jar
-
-# Dependências Python do driver (o gold_job roda a lógica pandas do dw_loader no
-# driver e escreve no Postgres DW). Versões alinhadas ao requirements.txt do projeto.
-RUN pip install --no-cache-dir \
-      pandas==2.2.2 \
-      "sqlalchemy>=1.4.36,<2.0" \
-      psycopg2-binary==2.9.9 \
-      python-dotenv==1.0.1
+# silver_job é PySpark puro (sem pandas). O gold_job (Spark->pandas->Postgres) é
+# legado — a Gold agora é dbt-trino sobre Iceberg (ver documentacao/gold-dbt-trino.md).
+# Se for reativar o gold_job, instale pandas compatível com o Python da imagem
+# (3.8 -> pandas<=2.0.3), sqlalchemy<2, psycopg2-binary, python-dotenv.
 
 USER spark

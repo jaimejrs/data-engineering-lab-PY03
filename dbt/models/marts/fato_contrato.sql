@@ -6,7 +6,7 @@
 with c as (
     select
         *,
-        year(try(cast(data_assinatura as date))) as ano_calc,
+        year(try(cast(substr(data_assinatura, 1, 10) as date))) as ano_calc,
         row_number() over (partition by id order by data_assinatura desc) as rn
     from {{ ref('stg_contratos') }}
     where id is not null
@@ -36,4 +36,4 @@ left join {{ ref('dim_orgao') }} dorg
 left join {{ ref('dim_modalidade') }} dmod
     on dmod.descricao_modalidade = contratos.descricao_modalidade
 left join {{ ref('dim_tempo') }} dtmp
-    on dtmp.data = try(cast(contratos.data_assinatura as date))
+    on dtmp.data = try(cast(substr(contratos.data_assinatura, 1, 10) as date))

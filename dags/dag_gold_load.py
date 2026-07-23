@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from airflow.decorators import dag
 from airflow.providers.docker.operators.docker import DockerOperator
 
-from dags.common import SILVER_READY_DATASET
+from dags.common import DBT_DOCKER_NETWORK, SILVER_READY_DATASET
 
 default_args = {
     "owner": "jaime",
@@ -51,7 +51,7 @@ def gold_load():
         # ENTRYPOINT da imagem é `dbt`; o comando abaixo vira `dbt build`.
         # DBT_PROFILES_DIR=/dbt e WORKDIR=/dbt já vêm da imagem.
         command="build",
-        network_mode="datalab_net",
+        network_mode=DBT_DOCKER_NETWORK,
         docker_url="unix://var/run/docker.sock",
         auto_remove="success",
         mount_tmp_dir=False,

@@ -9,6 +9,8 @@ arquivo, outra "encontrada" via import em `dag_silver_transform.py`), gerando
 Datalab em 19/07/2026).
 """
 
+import os
+
 from airflow.datasets import Dataset
 
 WATERMARK_VARIABLE = "bronze_last_data_extracao"
@@ -32,8 +34,13 @@ SPARK_EXTRA_JARS = (
 
 # Conf comum: em client mode o driver roda no container do scheduler; os
 # executores do cluster precisam reconectar ao driver por esse hostname (alias
-# de rede do serviço `airflow-scheduler` no compose).
+# de rede do scheduler). Parametrizável por env para servir repo autônomo
+# (`airflow-scheduler`) e servidor (`datalab_airflow_scheduler`).
 SPARK_SUBMIT_CONF = {
-    "spark.driver.host": "airflow-scheduler",
+    "spark.driver.host": os.environ.get("SPARK_DRIVER_HOST", "airflow-scheduler"),
     "spark.driver.bindAddress": "0.0.0.0",
 }
+
+# Rede Docker onde o DockerOperator (DAG 3, dbt) roda — `datalab_net` no stack
+# autônomo, `dataadm_default` no servidor.
+DBT_DOCKER_NETWORK = os.environ.get("DBT_DOCKER_NETWORK", "datalab_net")

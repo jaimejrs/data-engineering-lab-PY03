@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<!-- Config mínima de HDFS para o connector Iceberg do Trino alcançar o namenode. -->
+<!-- Template: __HDFS_HOST__ substituído no build (docker/trino/Dockerfile, via ARG). -->
 <configuration>
   <property>
     <name>fs.defaultFS</name>
-    <value>hdfs://hadoop:9000</value>
+    <value>hdfs://__HDFS_HOST__:9000</value>
   </property>
 </configuration>

@@ -8,6 +8,9 @@ services:
     build:
       context: ./docker/hive
       network: host
+      args:
+        HDFS_HOST: hadoop
+        METASTORE_DB_HOST: postgres
     image: datalab-hive-metastore:local
     container_name: lakehouse_hive_metastore
     restart: unless-stopped
@@ -49,6 +52,8 @@ services:
     build:
       context: ./docker/trino
       network: host
+      args:
+        HDFS_HOST: hadoop
     image: datalab-trino:local
     container_name: lakehouse_trino
     environment:

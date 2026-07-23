@@ -35,14 +35,22 @@ DEDUP_KEYS = {
 
 
 def normalize_api_date(value):
-    """'DD/MM/YYYY' -> 'YYYY-MM-DD'. Preserva None/vazio (ex: data_rescisao de contrato ativo)."""
+    """Normaliza data da API para ISO 'YYYY-MM-DD'. Preserva None/vazio.
+
+    Cobre dois formatos vistos na fonte: 'DD/MM/YYYY' e ISO com hora/timezone
+    (ex: '2026-07-21T00:00:00.000-03:00' -> '2026-07-21'). O que não casar
+    nenhum é mantido como veio (com aviso), para não descartar o registro.
+    """
     if not value:
         return value
     try:
         return datetime.strptime(value, "%d/%m/%Y").date().isoformat()
-    except ValueError:
-        logger.warning("Data fora do formato DD/MM/YYYY esperado: %r — mantendo valor original", value)
-        return value
+    except (ValueError, TypeError):
+        pass
+    if re.match(r"^\d{4}-\d{2}-\d{2}", str(value)):
+        return str(value)[:10]
+    logger.warning("Data fora dos formatos esperados (DD/MM/YYYY ou ISO): %r — mantendo original", value)
+    return value
 
 
 def normalize_postgres_date(value):

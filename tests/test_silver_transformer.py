@@ -24,6 +24,11 @@ class TestTransformRecord:
         result = silver_transformer.transform_record("contratos", record)
         assert result["data_assinatura"] == "2026-07-15"
 
+    def test_normalizes_iso_datetime_with_timezone_to_date(self):
+        record = {"id": 1, "data_termino": "2026-02-22T00:00:00.000-03:00"}
+        result = silver_transformer.transform_record("contratos", record)
+        assert result["data_termino"] == "2026-02-22"
+
     def test_normalizes_cnpj_cpf_preferring_plain_field(self):
         record = {
             "id": 1,

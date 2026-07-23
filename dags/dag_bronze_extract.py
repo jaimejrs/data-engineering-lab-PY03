@@ -29,6 +29,22 @@ from src.validators.bronze_validator import BronzeValidationError, validate_bron
 
 DEFAULT_WATERMARK = "2026-01-01"  # usado apenas na primeira execução, sem histórico prévio
 
+# Janela de reprocessamento (dias) subtraída do watermark na extração. O watermark
+# é uma data de PROCESSAMENTO, mas o filtro é sobre a data de EVENTO
+# (dataemissao/data_assinatura); sem lookback, registros que chegam atrasados na
+# origem (lançamento retroativo) nunca seriam capturados. O MERGE da Silver é
+# idempotente, então reprocessar a sobreposição não duplica. Ver docs/06.
+LOOKBACK_DAYS = int(os.environ.get("BRONZE_LOOKBACK_DAYS", "7"))
+
+
+def _extract_start(watermark: str) -> str:
+    """Data inicial da extração = watermark − LOOKBACK_DAYS (janela de dado atrasado)."""
+    try:
+        base = datetime.strptime(watermark, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return watermark
+    return (base - timedelta(days=LOOKBACK_DAYS)).isoformat()
+
 default_args = {
     "owner": "jaime",
     "depends_on_past": False,
@@ -53,14 +69,14 @@ def bronze_extract():
     def extract_postgres():
         ds = get_current_context()["ds"]
         watermark = Variable.get(WATERMARK_VARIABLE, default_var=DEFAULT_WATERMARK)
-        return postgres_extractor.extract_and_save(data_inicio=watermark, data_fim=ds, run_date=ds)
+        return postgres_extractor.extract_and_save(data_inicio=_extract_start(watermark), data_fim=ds, run_date=ds)
 
     @task
     def extract_api():
         ds = get_current_context()["ds"]
         watermark = Variable.get(WATERMARK_VARIABLE, default_var=DEFAULT_WATERMARK)
         return api_extractor.extract_and_save(
-            data_assinatura_inicio=watermark, data_assinatura_fim=ds, run_date=ds
+            data_assinatura_inicio=_extract_start(watermark), data_assinatura_fim=ds, run_date=ds
         )
 
     @task

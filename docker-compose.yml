@@ -160,6 +160,14 @@ services:
         METASTORE_DB_HOST: ${METASTORE_DB_HOST:-postgres}
     image: datalab-hive-metastore:local
     container_name: datalab_hive_metastore
+    mem_limit: 2g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083' 2>/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,6 +183,8 @@ services:
       network: host
     image: datalab-spark:local
     container_name: datalab_spark_master
+    mem_limit: 8g
+    cpus: 3.0
     entrypoint: ["/opt/spark/bin/spark-class"]
     command: ["org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8081"]
     environment: &spark-env
@@ -201,6 +211,8 @@ services:
       network: host
     image: datalab-spark:local
     container_name: datalab_spark_worker
+    mem_limit: 10g
+    cpus: 4.0
     entrypoint: ["/opt/spark/bin/spark-class"]
     command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
     environment: *spark-env
@@ -220,6 +232,8 @@ services:
         HDFS_HOST: ${HDFS_HOST:-namenode}
     image: datalab-trino:local
     container_name: datalab_trino
+    mem_limit: 6g
+    cpus: 3.0
     environment:
       HADOOP_USER_NAME: root  # escrever a Gold Iceberg no HDFS como superusuário
     depends_on:

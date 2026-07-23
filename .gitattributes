@@ -1,0 +1,11 @@
+# Arquivos executados/consumidos em containers Linux devem manter LF, mesmo
+# quando editados no Windows — evita `bad interpreter: /bin/bash^M` em scripts e
+# quebras em Dockerfiles/configs.
+*.sh        text eol=lf
+*.py        text eol=lf
+Dockerfile  text eol=lf
+*.properties text eol=lf
+*.xml       text eol=lf
+*.sql       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf

@@ -1,0 +1,15 @@
+# Perfil dbt-trino. Sem autenticação (lab). Escreve a Gold no catálogo `iceberg`,
+# schema `gold`; as sources apontam para `iceberg.silver` (ver models/sources.yml).
+ceara_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: dbt
+      host: trino
+      port: 8080
+      http_scheme: http
+      catalog: iceberg
+      schema: gold
+      threads: 4

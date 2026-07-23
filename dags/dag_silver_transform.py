@@ -1,36 +1,39 @@
 """
-DAG 2 — Transformação Silver.
+DAG 2 — Transformação Silver (Bronze -> tabelas Iceberg no HDFS).
 
-Escopo (Fase 2, Membro 1): orquestra a transformação Bronze -> Silver
-(normalização de datas, CNPJ/CPF e deduplicação — ver
-`src/transformers/silver_transformer.py`) logo após a Bronze de uma
-`data_extracao` ser validada pela DAG 1.
+Escopo: orquestra a transformação Bronze -> Silver (normalização de datas,
+CNPJ/CPF, dedup e particionamento) logo após a Bronze de uma `data_extracao`
+ser validada pela DAG 1.
 
-Disparo: por Dataset (`BRONZE_VALIDATED_DATASET`, emitido pela task
-`advance_watermark` da DAG 1) em vez de horário fixo — evita rodar a Silver
-antes da Bronze do dia estar pronta e validada, sem precisar de sensor externo.
-Ao terminar, emite `SILVER_READY_DATASET`, que dispara a DAG 3 (Gold).
+Arquitetura lakehouse (Spark + Iceberg + HDFS, catálogo Hive Metastore): a
+transformação roda como job PySpark (`src/spark_jobs/silver_job.py`) submetido a
+um cluster Spark standalone via `SparkSubmitOperator` (client mode). O job grava
+tabelas Iceberg `lakehouse.silver.*` e faz `MERGE INTO` pela chave de negócio —
+deduplicando **entre execuções**, não só dentro de uma (ver
+`documentacao/lakehouse-spark-iceberg.md`).
 
-Tasks: transform (única task; internamente processa as 4 fontes da Bronze).
-
-Nota (19/07/2026, Jaime): a lógica de normalização/dedup em
-`silver_transformer.py` é implementação inicial de apoio, a cargo do Carlos
-(tarefas 13/14) revisar/validar — ver `docs/checklist.md`.
+Disparo: por Dataset (`BRONZE_VALIDATED_DATASET`, emitido por `advance_watermark`
+da DAG 1). Ao terminar, emite `SILVER_READY_DATASET`, que dispara a DAG 3 (Gold).
+`--run-date` vem da Airflow Variable de watermark (mesma `data_extracao` que a
+DAG 1 acabou de validar) — não do `ds` do disparo por Dataset.
 """
 
-import os
-import sys
 from datetime import datetime, timedelta
 
-from airflow.decorators import dag, task
-from airflow.models import Variable
+from airflow.decorators import dag
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+from dags.common import (
+    BRONZE_VALIDATED_DATASET,
+    SILVER_READY_DATASET,
+    SPARK_EXTRA_JARS,
+    SPARK_SUBMIT_CONF,
+    WATERMARK_VARIABLE,
+)
 
-from dags.common import BRONZE_VALIDATED_DATASET, SILVER_READY_DATASET, WATERMARK_VARIABLE  # noqa: E402
-from src.transformers.silver_transformer import transform_bronze_to_silver  # noqa: E402
+# run-date = mesma data_extracao que a DAG 1 validou (Airflow Variable de watermark),
+# renderizada por Jinja no submit — não o `ds` do disparo por Dataset.
+RUN_DATE_TEMPLATE = f"{{{{ var.value.{WATERMARK_VARIABLE} }}}}"
 
 default_args = {
     "owner": "jaime",
@@ -42,25 +45,26 @@ default_args = {
 
 @dag(
     dag_id="silver_transform",
-    description="DAG 2 — transformação Bronze -> Silver (normalização, dedup)",
+    description="DAG 2 — Bronze -> Silver (Iceberg) via Spark",
     default_args=default_args,
     schedule=[BRONZE_VALIDATED_DATASET],
     start_date=datetime(2026, 7, 1),
     catchup=False,
     max_active_runs=1,
-    tags=["silver", "transformacao", "fase-2"],
+    tags=["silver", "transformacao", "iceberg", "spark", "fase-2"],
 )
 def silver_transform():
-
-    @task(outlets=[SILVER_READY_DATASET])
-    def transform():
-        # Mesmo valor de data_extracao que a DAG 1 acabou de validar e gravar
-        # em advance_watermark — não usa `ds` do próprio disparo por Dataset,
-        # que não corresponde à data_extracao da Bronze de origem.
-        run_date = Variable.get(WATERMARK_VARIABLE)
-        return transform_bronze_to_silver(run_date=run_date)
-
-    transform()
+    SparkSubmitOperator(
+        task_id="transform",
+        application="/opt/airflow/src/spark_jobs/silver_job.py",
+        conn_id="spark_default",
+        deploy_mode="client",
+        name="silver_transform",
+        application_args=["--run-date", RUN_DATE_TEMPLATE],
+        jars=SPARK_EXTRA_JARS,
+        conf=SPARK_SUBMIT_CONF,
+        outlets=[SILVER_READY_DATASET],
+    )
 
 
 silver_transform()

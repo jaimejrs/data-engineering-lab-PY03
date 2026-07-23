@@ -10,6 +10,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Provisiona o DB `metastore` do Hive (só em volume novo — ver
+      # docker/postgres-init/01-metastore.sql para o fallback manual).
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dlab -d datalab"]
@@ -85,6 +88,8 @@ services:
       HDFS_WEBHDFS_URL: http://namenode:9870
       HDFS_USER: root
       DW_POSTGRES_URL: postgresql://dw_user:dw_password@postgres_dw:5432/ceara_dw
+      # Conexão usada pelo SparkSubmitOperator (DAGs 2 e 3) — cluster standalone.
+      AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
     entrypoint: /bin/bash
     command:
       - -c
@@ -92,6 +97,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
+      - ./sql:/opt/airflow/sql
       - airflow_logs:/opt/airflow/logs
 
   airflow-webserver:
@@ -117,6 +123,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
+      - ./sql:/opt/airflow/sql
       - airflow_logs:/opt/airflow/logs
     restart: unless-stopped
 
@@ -137,7 +144,11 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
+      - ./sql:/opt/airflow/sql
       - airflow_logs:/opt/airflow/logs
+      # DAG 3 dispara o dbt via DockerOperator (imagem datalab-dbt) -> precisa do
+      # socket do Docker. Ver documentacao/gold-dbt-trino.md (permissão do socket).
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
   jupyter:
@@ -158,6 +169,99 @@ services:
     depends_on:
       - namenode
     restart: unless-stopped
+
+  hive-metastore:
+    build:
+      context: ./docker/hive
+      network: host  # host só tem IPv6; ver docker/airflow/README.md
+    image: datalab-hive-metastore:local
+    container_name: datalab_hive_metastore
+    depends_on:
+      postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_started
+    ports:
+      - "9083:9083"
+    restart: unless-stopped
+
+  spark-master:
+    build:
+      context: ./docker/spark
+      network: host
+    image: datalab-spark:local
+    container_name: datalab_spark_master
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8081"]
+    environment: &spark-env
+      HIVE_METASTORE_URI: thrift://hive-metastore:9083
+      ICEBERG_WAREHOUSE: hdfs://namenode:9000/warehouse
+      HDFS_DEFAULT_FS: hdfs://namenode:9000
+      BRONZE_BASE_PATH: /bronze
+      DW_POSTGRES_URL: postgresql://dw_user:dw_password@postgres_dw:5432/ceara_dw
+    ports:
+      - "7077:7077"
+      - "8081:8081"
+    depends_on:
+      - namenode
+      - hive-metastore
+    # Repo montado para execução manual/debug de jobs direto no cluster (local[*]).
+    volumes:
+      - ./src:/opt/datalab/src
+      - ./sql:/opt/datalab/sql
+    restart: unless-stopped
+
+  spark-worker:
+    build:
+      context: ./docker/spark
+      network: host
+    image: datalab-spark:local
+    container_name: datalab_spark_worker
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
+    environment: *spark-env
+    ports:
+      - "8082:8081"
+    depends_on:
+      - spark-master
+    volumes:
+      - ./src:/opt/datalab/src
+      - ./sql:/opt/datalab/sql
+    restart: unless-stopped
+
+  trino:
+    build:
+      context: ./docker/trino
+      network: host
+    image: datalab-trino:local
+    container_name: datalab_trino
+    depends_on:
+      - hive-metastore
+      - namenode
+    ports:
+      - "8085:8080"  # UI/HTTP do Trino (8080 já é do Airflow no host)
+    restart: unless-stopped
+
+  # dbt (adapter Trino) — não sobe no `up` (profile "tools"); é buildado e rodado
+  # sob demanda: `docker compose run --rm dbt build`, ou pela DAG 3 via DockerOperator.
+  dbt:
+    build:
+      context: ./dbt
+      network: host
+    image: datalab-dbt:local
+    container_name: datalab_dbt
+    profiles: ["tools"]
+    depends_on:
+      - trino
+    volumes:
+      - ./dbt:/dbt
+    command: ["build"]
+
+# Nome de rede fixo para o DockerOperator da DAG 3 referenciar de forma
+# determinística (network_mode="datalab_net").
+networks:
+  default:
+    name: datalab_net
 
 volumes:
   postgres_data:

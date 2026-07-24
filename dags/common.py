@@ -23,6 +23,10 @@ BRONZE_VALIDATED_DATASET = Dataset("bronze://validated")
 # (dag_gold_load) usa isso como schedule, mesmo padrão da DAG 1 -> DAG 2.
 SILVER_READY_DATASET = Dataset("silver://ready")
 
+# Emitido quando o `dbt build` da DAG 3 termina — a DAG 4 (dag_ml_inference,
+# Modelo 1 + Modelo 2) usa isso como schedule, mesmo padrão em cadeia.
+GOLD_READY_DATASET = Dataset("gold://ready")
+
 # --- Submit Spark (DAGs 2 e 3, SparkSubmitOperator, cluster standalone) ---
 
 # Jars Iceberg + JDBC Postgres embutidos na imagem do Airflow (docker/airflow),

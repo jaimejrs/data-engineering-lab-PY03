@@ -16,7 +16,8 @@ Docker montado no scheduler (ver docker-compose.yml). Alternativa manual, com o
 projeto vivo: `docker compose run --rm dbt build`.
 
 Substitui a carga imperativa anterior (`gold_job.py`/`dw_loader.py`, agora legado).
-Disparo: por Dataset (`SILVER_READY_DATASET`).
+Disparo: por Dataset (`SILVER_READY_DATASET`). Ao terminar, emite
+`GOLD_READY_DATASET`, que dispara a DAG 4 (`ml_inference` — Modelo 1 + Modelo 2).
 """
 
 import os
@@ -31,7 +32,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from dags.common import DBT_DOCKER_NETWORK, SILVER_READY_DATASET  # noqa: E402
+from dags.common import DBT_DOCKER_NETWORK, GOLD_READY_DATASET, SILVER_READY_DATASET  # noqa: E402
 
 default_args = {
     "owner": "jaime",
@@ -62,6 +63,7 @@ def gold_load():
         docker_url="unix://var/run/docker.sock",
         auto_remove="success",
         mount_tmp_dir=False,
+        outlets=[GOLD_READY_DATASET],
     )
 
 

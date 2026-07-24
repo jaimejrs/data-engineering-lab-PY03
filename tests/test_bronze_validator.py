@@ -126,6 +126,61 @@ class TestValidateSource:
         assert result == {"source": "unidade_gestora", "partitions": 1, "files": 1, "records": 0}
 
 
+class TestRecordSampling:
+    def test_sample_size_zero_checks_every_record(self):
+        # Bug sistemático no ÚLTIMO registro de um lote grande — sample_size=0
+        # (comportamento original) tem que pegar, mesmo sem amostra nenhuma.
+        records = [{"id": i, "ano": 2026, "dataemissao": "2026-07-15"} for i in range(200)]
+        records[-1]["dataemissao"] = None
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            with pytest.raises(bronze_validator.BronzeValidationError, match="colunas obrigatórias vazias"):
+                bronze_validator.validate_source("empenhos", "2026-07-15", sample_size=0)
+
+    def test_sample_still_catches_error_at_head_or_tail(self):
+        # Erro sistemático de lote tende a aparecer nas bordas — a amostra
+        # sempre inclui início e fim, então continua pegando esse caso comum
+        # mesmo sem checar o lote inteiro.
+        records = [{"id": i, "ano": 2026, "dataemissao": "2026-07-15"} for i in range(300)]
+        records[0]["dataemissao"] = None  # erro logo no primeiro registro do chunk
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            with pytest.raises(bronze_validator.BronzeValidationError, match="colunas obrigatórias vazias"):
+                bronze_validator.validate_source("empenhos", "2026-07-15", sample_size=30)
+
+    def test_sample_does_not_change_total_record_count(self):
+        # A amostra reduz quantos registros têm o SCHEMA checado, mas a
+        # contagem total retornada continua exata (vem de len(records), não da amostra).
+        records = [{"id": i, "ano": 2026, "dataemissao": "2026-07-15"} for i in range(500)]
+        with patch.object(bronze_validator, "find_data_extracao_dirs",
+                           return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
+                patch.object(bronze_validator, "list_json_files",
+                             return_value=["empenhos/ano=2026/mes=07/data_extracao=2026-07-15/chunk_0001.json"]), \
+                patch.object(bronze_validator, "read_json_records", return_value=records):
+            result = bronze_validator.validate_source("empenhos", "2026-07-15", sample_size=10)
+
+        assert result["records"] == 500
+
+    def test_records_to_check_respects_sample_size(self):
+        records = list(range(100))
+        sample = bronze_validator._records_to_check(records, sample_size=15)
+        assert len(sample) == 15
+
+    def test_records_to_check_returns_all_when_sample_size_covers_batch(self):
+        records = list(range(10))
+        assert bronze_validator._records_to_check(records, sample_size=50) == records
+
+    def test_records_to_check_returns_all_when_sample_size_zero(self):
+        records = list(range(10))
+        assert bronze_validator._records_to_check(records, sample_size=0) == records
+
+
 class TestValidateBronze:
     def test_validates_all_sources_and_returns_summary(self):
         def fake_find_dirs(source, run_date):

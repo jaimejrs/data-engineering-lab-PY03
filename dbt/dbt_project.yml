@@ -7,6 +7,32 @@ profile: 'ceara_lakehouse'
 model-paths: ["models"]
 macro-paths: ["macros"]
 
+# Garante que a tabela de score do Modelo 1 (models/anomaly_detection.py) exista
+# antes do build, mesmo se o DAG de inferência (dags/dag_ml_inference.py) nunca
+# rodou ainda — sem isso, o LEFT JOIN em fato_contrato.sql quebraria num
+# ambiente novo com "Table not found". Idempotente; schema espelha
+# `models.anomaly_detection.write_scores`.
+on-run-start:
+  - >
+    CREATE TABLE IF NOT EXISTS {{ source('ml_scores', 'score_anomalia_contrato') }} (
+        id_contrato_origem varchar,
+        ano integer,
+        score_anomalia double,
+        model_version varchar,
+        scored_at timestamp
+    )
+  # Idem para a tabela de reconciliação Bronze->Silver (item 6 de
+  # docs/06-analise-critica.md), escrita por src/reconciliation.py (DAG 1),
+  # não pelo dbt — sem isso, bronze_silver_reconciliacao.sql quebraria num
+  # ambiente novo com "Table not found".
+  - >
+    CREATE TABLE IF NOT EXISTS {{ source('audit', 'bronze_ingestao') }} (
+        fonte varchar,
+        data_extracao varchar,
+        registros bigint,
+        gravado_em timestamp
+    )
+
 models:
   ceara_lakehouse:
     # Staging: CTEs inlinadas (sem objeto no catálogo).

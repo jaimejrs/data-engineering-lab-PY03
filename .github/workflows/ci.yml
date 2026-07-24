@@ -18,11 +18,34 @@ jobs:
       - name: Instala dependências de teste (subset leve)
         run: |
           python -m pip install --upgrade pip
-          pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest
+          pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest \
+            scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2
       - name: pytest (regras/normalização/extractors)
         run: pytest -q
       - name: Compila os jobs PySpark (sintaxe; pyspark não instalado)
         run: python -m py_compile src/spark_jobs/*.py
+
+      - name: Compila os módulos de ML e as DAGs (sintaxe; airflow não instalado)
+        run: python -m py_compile models/*.py dags/*.py
+
+  spark-tests:
+    name: pytest (Spark local + Iceberg — normalização e idempotência do MERGE INTO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instala pyspark (não faz parte da suíte leve do job `tests`)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas python-dotenv pytest pyspark==3.5.3
+      - name: pytest (tests/test_silver_job_spark.py — Spark local[1] + Iceberg em catálogo hadoop, sem HMS/HDFS)
+        run: pytest -q tests/test_silver_job_spark.py
 
   dbt:
     name: dbt parse (valida projeto/modelos)

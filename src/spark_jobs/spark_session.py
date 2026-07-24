@@ -22,6 +22,12 @@ HMS_URI = os.environ.get("HIVE_METASTORE_URI", "thrift://hive-metastore:9083")
 WAREHOUSE = os.environ.get("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse")
 HDFS_DEFAULT_FS = os.environ.get("HDFS_DEFAULT_FS", "hdfs://namenode:9000")
 
+# "hive" (padrão, produção) usa o Hive Metastore via HMS_URI. "hadoop" dispensa
+# metastore — cada diretório do warehouse é o catálogo — usado só pelos testes
+# de idempotência do MERGE INTO (tests/test_silver_job_spark.py), que rodam
+# 100% locais, sem HMS/HDFS. Ver docs/06-analise-critica.md, item 8.
+CATALOG_TYPE = os.environ.get("ICEBERG_CATALOG_TYPE", "hive")
+
 ICEBERG_EXTENSIONS = "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
 
 
@@ -31,19 +37,19 @@ def build_session(app_name: str) -> SparkSession:
     As configs de extensão e de catálogo precisam ser definidas *antes* de a
     sessão ser criada — por isso vão no builder, não via `spark.conf.set` depois.
     """
-    return (
+    builder = (
         SparkSession.builder.appName(app_name)
         .config("spark.sql.extensions", ICEBERG_EXTENSIONS)
         .config(f"spark.sql.catalog.{CATALOG}", "org.apache.iceberg.spark.SparkCatalog")
-        .config(f"spark.sql.catalog.{CATALOG}.type", "hive")
-        .config(f"spark.sql.catalog.{CATALOG}.uri", HMS_URI)
+        .config(f"spark.sql.catalog.{CATALOG}.type", CATALOG_TYPE)
         .config(f"spark.sql.catalog.{CATALOG}.warehouse", WAREHOUSE)
         # Trata TIMESTAMP sem timezone (comum em dados legados) sem estourar erro.
         .config("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
         .config("spark.hadoop.fs.defaultFS", HDFS_DEFAULT_FS)
-        .enableHiveSupport()
-        .getOrCreate()
     )
+    if CATALOG_TYPE == "hive":
+        builder = builder.config(f"spark.sql.catalog.{CATALOG}.uri", HMS_URI).enableHiveSupport()
+    return builder.getOrCreate()
 
 
 def table_fqn(source: str) -> str:

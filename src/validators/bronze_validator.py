@@ -10,17 +10,34 @@ Implementação inicial de apoio à DAG 1 (Membro 1) — a cargo do Membro 4
 """
 
 import logging
+import os
+import random
 
 from src.extractors.storage import find_data_extracao_dirs, list_json_files, read_json_records
 
 logger = logging.getLogger(__name__)
+
+# Tamanho da amostra de registros checados por arquivo, por fonte, na validação
+# de schema/completude. `0` (padrão) preserva o comportamento original — checa
+# 100% dos registros. Para a carga cheia (~1,38M registros / 960 arquivos), isso
+# é O(tudo) numa task Python single-thread do Airflow (ver docs/06-analise-
+# -critica.md, item 7); setar via `BRONZE_VALIDATE_SAMPLE_SIZE` reduz o custo
+# de CPU da checagem sem deixar de contar o total exato de registros (a
+# contagem não depende de checar cada um, só de `len(records)`).
+RECORD_SAMPLE_SIZE = int(os.environ.get("BRONZE_VALIDATE_SAMPLE_SIZE", "0"))
 
 # Colunas mínimas exigidas por fonte para considerar o schema íntegro.
 REQUIRED_COLUMNS = {
     "empenhos": {"id", "ano", "dataemissao"},
     "ordem_bancaria_orcamentaria": {"id", "ano", "dataemissao"},
     "unidade_gestora": {"codigo", "ano"},
-    "contratos": {"id", "num_contrato", "valor_contrato", "data_assinatura", "cod_gestora"},
+    # num_contrato NÃO entra aqui: contratos por dispensa/inexigibilidade sem
+    # instrumento formal (ex: descricao_tipo="CONTRATO DE RATEIO" com
+    # descricao_url="...SEM.INSTRUMENTO.CONTRATUAL...") legitimamente vêm com
+    # num_contrato=null na API real — confirmado em produção em 24/07/2026. A
+    # identificação do registro é `id` (chave real usada a jusante); num_contrato
+    # é só um campo de referência, não uma chave.
+    "contratos": {"id", "valor_contrato", "data_assinatura", "cod_gestora"},
 }
 
 # Mínimo de registros esperado por execução, usado quando o caller não passa
@@ -39,7 +56,28 @@ class BronzeValidationError(RuntimeError):
     """Falha de validação de schema ou completude na camada Bronze."""
 
 
-def validate_source(source, run_date, required_columns=None, min_records=0):
+def _records_to_check(records, sample_size):
+    """Amostra de `records` para a checagem de schema/completude.
+
+    `sample_size` de 0 (ou >= len(records)) preserva o comportamento original —
+    checa todos. Caso contrário, pega o início e o fim do lote (erro sistemático
+    de um chunk tende a aparecer logo nos primeiros/últimos registros escritos)
+    mais uma amostra aleatória do meio — determinística o bastante pra pegar
+    problema recorrente, sem custar O(todos os registros).
+    """
+    if not sample_size or len(records) <= sample_size:
+        return records
+
+    edge = sample_size // 3
+    head = records[:edge]
+    tail = records[-edge:] if edge else []
+    middle_pool = records[edge : len(records) - edge]
+    middle_size = max(sample_size - len(head) - len(tail), 0)
+    middle = random.sample(middle_pool, min(middle_size, len(middle_pool)))
+    return head + middle + tail
+
+
+def validate_source(source, run_date, required_columns=None, min_records=0, sample_size=None):
     """Valida os arquivos de uma fonte para uma `data_extracao` específica.
 
     Busca recursivamente por `data_extracao={run_date}` sob a raiz da fonte —
@@ -50,10 +88,17 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
     `unidade_gestora` é referência completa e pode legitimamente vir vazia em
     bases de teste, mas as demais fontes precisam ter ao menos um arquivo —
     ausência total de arquivo indica que a extração não rodou.
+
+    `sample_size` (default: `RECORD_SAMPLE_SIZE`, controlado por
+    `BRONZE_VALIDATE_SAMPLE_SIZE`) limita quantos registros de CADA arquivo têm
+    o schema checado — `0` checa todos (comportamento original). A contagem
+    total retornada em `records` sempre reflete o volume real do arquivo,
+    independente da amostra usada na checagem.
     """
     if source not in REQUIRED_COLUMNS:
         raise ValueError(f"Fonte '{source}' fora do escopo de validação (esperado: {list(REQUIRED_COLUMNS)})")
     required_columns = required_columns or REQUIRED_COLUMNS[source]
+    sample_size = RECORD_SAMPLE_SIZE if sample_size is None else sample_size
 
     partitions = find_data_extracao_dirs(source, run_date)
     files = [path for partition in partitions for path in list_json_files(partition)]
@@ -66,7 +111,7 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
     total_records = 0
     for relative_path in files:
         records = read_json_records(relative_path)
-        for record in records:
+        for record in _records_to_check(records, sample_size):
             missing = required_columns - record.keys()
             if missing:
                 raise BronzeValidationError(
@@ -91,8 +136,9 @@ def validate_source(source, run_date, required_columns=None, min_records=0):
         )
 
     logger.info(
-        "Bronze validada [%s]: %s partição(ões), %s arquivo(s), %s registro(s)",
+        "Bronze validada [%s]: %s partição(ões), %s arquivo(s), %s registro(s)%s",
         source, len(partitions), len(files), total_records,
+        f" (schema checado por amostra de até {sample_size}/arquivo)" if sample_size else "",
     )
     return {"source": source, "partitions": len(partitions), "files": len(files), "records": total_records}
 

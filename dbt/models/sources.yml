@@ -10,3 +10,29 @@ sources:
       - name: ordem_bancaria_orcamentaria
       - name: unidade_gestora
       - name: contratos
+
+  - name: ml_scores
+    description: >
+      Tabelas Gold escritas pelos scripts de ML (models/), não pelo dbt — o
+      score/previsão de cada modelo. `fato_contrato` faz LEFT JOIN em
+      `score_anomalia_contrato` (ver dbt/models/marts/fato_contrato.sql); como
+      `fato_contrato` é materialized='table' (recriada a cada build), gravar o
+      score aqui em vez de fazer UPDATE direto no fato evita que o build
+      seguinte apague o resultado do modelo.
+    database: iceberg
+    schema: gold
+    tables:
+      - name: score_anomalia_contrato
+        description: "Score de anomalia (Modelo 1, Isolation Forest) por (id_contrato_origem, ano). Ver models/anomaly_detection.py."
+
+  - name: audit
+    description: >
+      Tabelas de auditoria/observabilidade escritas por código Python fora do
+      dbt (DAGs), não pipelines de negócio. `bronze_ingestao` é gravada pela
+      task `validate` da DAG 1 (src/reconciliation.py) — item 6 de
+      docs/06-analise-critica.md.
+    database: iceberg
+    schema: gold
+    tables:
+      - name: bronze_ingestao
+        description: "Contagem de registros validados na Bronze por (fonte, data_extracao). Uma linha por execução da DAG 1; soma por fonte é o total processado até agora."

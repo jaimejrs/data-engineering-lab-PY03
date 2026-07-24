@@ -13,3 +13,8 @@ union all
 select 'fato_empenho', 'valor', valor
 from {{ ref('fato_empenho') }}
 where valor < 0
+
+union all
+select 'fato_ordem_bancaria', 'valor', valor
+from {{ ref('fato_ordem_bancaria') }}
+where valor < 0

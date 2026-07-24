@@ -8,6 +8,7 @@ valida schema/completude antes de avançar o watermark incremental.
 Tasks: extract_postgres, extract_api -> validate_bronze -> advance_watermark.
 """
 
+import logging
 import os
 import sys
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ if REPO_ROOT not in sys.path:
 
 from dags.common import BRONZE_VALIDATED_DATASET, WATERMARK_VARIABLE  # noqa: E402
 from src.extractors import api_extractor, postgres_extractor  # noqa: E402
+from src.reconciliation import record_bronze_counts  # noqa: E402
 from src.validators.bronze_validator import BronzeValidationError, validate_bronze  # noqa: E402
 
 DEFAULT_WATERMARK = "2026-01-01"  # usado apenas na primeira execução, sem histórico prévio
@@ -83,9 +85,22 @@ def bronze_extract():
     def validate(postgres_result, api_result):
         ds = get_current_context()["ds"]
         try:
-            return validate_bronze(run_date=ds)
+            result = validate_bronze(run_date=ds)
         except BronzeValidationError as exc:
             raise AirflowException(f"Validação da Bronze falhou para data_extracao={ds}: {exc}") from exc
+
+        # Reconciliação Bronze -> Silver (item 6 de docs/06-analise-critica.md):
+        # persiste a contagem que a validação acima já calculou, sem reler a
+        # Bronze de novo. Auxiliar/observabilidade — uma falha aqui (ex: Trino
+        # fora do ar) não pode derrubar a ingestão, que já passou na validação.
+        log = logging.getLogger(__name__)
+        try:
+            record_bronze_counts(ds, {source: info["records"] for source, info in result.items()})
+            log.info("Reconciliação: contagens de Bronze gravadas para data_extracao=%s", ds)
+        except Exception as exc:
+            log.warning("Falha ao gravar contagens de reconciliação para data_extracao=%s: %s", ds, exc)
+
+        return result
 
     @task(outlets=[BRONZE_VALIDATED_DATASET])
     def advance_watermark(validation_result):

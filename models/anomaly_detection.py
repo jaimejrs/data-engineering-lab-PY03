@@ -1,0 +1,225 @@
+"""Modelo 1 — detecção de anomalias em contratos públicos (Isolation Forest).
+
+Aprende o comportamento "normal" de um contrato (valor, modalidade, tipo de
+objeto, duração, emergência, histórico de infração do credor) e atribui um
+score de anomalia em [0, 1] — quanto mais alto, mais atípico. Não supervisionado
+por decisão de projeto (não existe rótulo de "contrato irregular" em nenhuma das
+fontes — ver docs/Trabalho Final.pdf, seção 7.3: "avalie o modelo com analistas,
+pois não há rótulos ground-truth").
+
+Features (conforme docs/Trabalho Final.pdf, seção 4.3 — Modelo 1):
+  - valor_contrato
+  - modalidade (one-hot)
+  - tipo_objeto (one-hot; categorias raras agrupadas em "OUTROS")
+  - dias_vigencia (data_termino - data_inicio)
+  - flag_emergency
+  - historico_credor_infringement
+
+Lê a Gold (`iceberg.gold.fato_contrato` + dimensões) e a Silver
+(`iceberg.silver.contratos`, só para `tipo_objeto`/vigência, que ainda não estão
+modelados na Gold) via Trino — mesmo padrão de conexão dos notebooks de EDA.
+
+Uso: python -m models.anomaly_detection [--contamination auto]
+"""
+
+import argparse
+import logging
+import os
+
+import joblib
+import pandas as pd
+import trino
+from dotenv import load_dotenv
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import MinMaxScaler
+
+from src import trino_io
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+ARTIFACT_PATH = os.environ.get(
+    "ANOMALY_MODEL_PATH",
+    os.path.join(os.path.dirname(__file__), "artifacts", "isolation_forest_contratos.joblib"),
+)
+
+# Tabela Gold própria do score — não é gravada em `fato_contrato` diretamente:
+# `fato_contrato` é `materialized='table'` no dbt (recriada do zero a cada
+# `dbt build`), então um UPDATE nela seria apagado no build seguinte.
+# `fato_contrato.sql` faz LEFT JOIN nesta tabela (ver dbt/models/sources.yml,
+# source `ml_scores`), então o score aparece automaticamente no próximo build.
+SCORE_TABLE = "iceberg.gold.score_anomalia_contrato"
+MODEL_VERSION = "isolation_forest_v1"
+
+# Categorias mais frequentes de tipo_objeto mantidas isoladas; o resto vira "OUTROS"
+# (evita one-hot explodir com centenas de descrições de objeto quase únicas).
+TOP_TIPO_OBJETO = 8
+
+FEATURE_QUERY = """
+SELECT
+    f.id_contrato_origem,
+    f.ano,
+    f.valor_contrato,
+    f.flag_emergency,
+    dm.descricao_modalidade AS modalidade,
+    sc.tipo_objeto,
+    sc.data_inicio,
+    sc.data_termino,
+    COALESCE(dc.historico_infringement, false) AS historico_credor_infringement
+FROM iceberg.gold.fato_contrato f
+LEFT JOIN iceberg.gold.dim_credor dc ON f.sk_credor = dc.sk_credor
+LEFT JOIN iceberg.gold.dim_modalidade dm ON f.sk_modalidade = dm.sk_modalidade
+LEFT JOIN iceberg.silver.contratos sc ON CAST(sc.id AS VARCHAR) = f.id_contrato_origem
+WHERE f.valor_contrato IS NOT NULL
+"""
+
+
+def connect():
+    return trino.dbapi.connect(
+        host=os.environ.get("TRINO_HOST", "trino"),
+        port=int(os.environ.get("TRINO_PORT", 8080)),
+        user=os.environ.get("TRINO_USER", "notebook"),
+        http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
+        catalog=os.environ.get("TRINO_CATALOG", "iceberg"),
+        schema="gold",
+    )
+
+
+def extract_features(conn=None) -> pd.DataFrame:
+    """Lê a Gold (fato_contrato + dimensões) e a Silver (tipo_objeto/vigência) via Trino."""
+    own_conn = conn is None
+    conn = conn or connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(FEATURE_QUERY)
+        rows = cur.fetchall()
+        cols = [c[0] for c in cur.description]
+    finally:
+        if own_conn:
+            conn.close()
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """Engenharia de features: dias_vigencia, one-hot de modalidade/tipo_objeto, flags booleanas.
+
+    `df` é o resultado bruto de `extract_features` (ou um DataFrame com as mesmas
+    colunas, ex: em teste). Retorna só colunas numéricas/binárias, prontas pro
+    `IsolationForest` — que não aceita `NaN` nem categórica direto.
+    """
+    out = pd.DataFrame(index=df.index)
+    out["valor_contrato"] = pd.to_numeric(df["valor_contrato"], errors="coerce")
+
+    inicio = pd.to_datetime(df["data_inicio"], errors="coerce")
+    termino = pd.to_datetime(df["data_termino"], errors="coerce")
+    out["dias_vigencia"] = (termino - inicio).dt.days
+
+    out["flag_emergency"] = df["flag_emergency"].fillna(False).astype(int)
+    out["historico_credor_infringement"] = df["historico_credor_infringement"].fillna(False).astype(int)
+
+    top_tipos = df["tipo_objeto"].value_counts().head(TOP_TIPO_OBJETO).index
+    tipo_objeto = df["tipo_objeto"].where(df["tipo_objeto"].isin(top_tipos), "OUTROS")
+    out = out.join(pd.get_dummies(df["modalidade"].fillna("DESCONHECIDA"), prefix="modalidade"))
+    out = out.join(pd.get_dummies(tipo_objeto.fillna("DESCONHECIDO"), prefix="tipo_objeto"))
+
+    # Imputação simples pela mediana (best-effort) — Isolation Forest não aceita NaN.
+    out["valor_contrato"] = out["valor_contrato"].fillna(out["valor_contrato"].median())
+    out["dias_vigencia"] = out["dias_vigencia"].fillna(out["dias_vigencia"].median())
+    return out
+
+
+def train_model(X: pd.DataFrame, contamination="auto", random_state=42) -> IsolationForest:
+    model = IsolationForest(contamination=contamination, random_state=random_state, n_estimators=200)
+    model.fit(X)
+    return model
+
+
+def score_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
+    """Converte o `decision_function` (maior = mais normal) em score de anomalia
+    em [0, 1] (maior = mais atípico), via min-max scaling sobre o lote."""
+    raw = -model.decision_function(X)
+    scaled = MinMaxScaler().fit_transform(raw.reshape(-1, 1)).ravel()
+    return pd.Series(scaled, index=X.index, name="score_anomalia")
+
+
+def save_model(model: IsolationForest, feature_columns: list, path: str = ARTIFACT_PATH) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    joblib.dump({"model": model, "feature_columns": feature_columns}, path)
+    logger.info("Modelo salvo em %s", path)
+
+
+def load_model(path: str = ARTIFACT_PATH):
+    bundle = joblib.load(path)
+    return bundle["model"], bundle["feature_columns"]
+
+
+def write_scores(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) -> None:
+    """Grava `(id_contrato_origem, ano, score_anomalia)` em `SCORE_TABLE`.
+
+    Substitui a tabela inteira a cada chamada (re-score em lote, não
+    incremental) — mesmo padrão de `trino_io.replace_table`.
+    """
+    payload = resultado[["id_contrato_origem", "ano", "score_anomalia"]].copy()
+    payload["model_version"] = model_version
+    payload["scored_at"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    trino_io.replace_table(
+        table=SCORE_TABLE,
+        df=payload,
+        columns=["id_contrato_origem", "ano", "score_anomalia", "model_version", "scored_at"],
+        ddl=f"""
+            CREATE TABLE IF NOT EXISTS {SCORE_TABLE} (
+                id_contrato_origem varchar,
+                ano integer,
+                score_anomalia double,
+                model_version varchar,
+                scored_at timestamp
+            )
+        """,
+        casts={"scored_at": "TIMESTAMP"},
+    )
+    logger.info("Gravados %s scores em %s", len(payload), SCORE_TABLE)
+
+
+def run(contamination="auto", persist: bool = True) -> pd.DataFrame:
+    """Extrai features da Gold/Silver, treina, escora e (por padrão) grava o
+    resultado em `SCORE_TABLE` para `fato_contrato` pegar no próximo `dbt build`."""
+    raw = extract_features()
+    X = build_feature_matrix(raw)
+    model = train_model(X, contamination=contamination)
+    scores = score_anomalia(model, X)
+    save_model(model, list(X.columns))
+
+    resultado = raw[["id_contrato_origem", "ano"]].copy()
+    resultado["score_anomalia"] = scores.values
+    logger.info(
+        "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f",
+        len(resultado),
+        resultado["score_anomalia"].mean(),
+        resultado["score_anomalia"].max(),
+    )
+    if persist:
+        write_scores(resultado)
+    return resultado
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Modelo 1 — detecção de anomalias em contratos")
+    parser.add_argument(
+        "--contamination",
+        default="auto",
+        help="Proporção esperada de contratos anômalos (ex: 0.05) ou 'auto' (padrão do scikit-learn)",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = _parse_args()
+    try:
+        contamination = float(args.contamination)
+    except ValueError:
+        contamination = args.contamination
+    resultado = run(contamination=contamination)
+    print(resultado.sort_values("score_anomalia", ascending=False).head(20).to_string(index=False))

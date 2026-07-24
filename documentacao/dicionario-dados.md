@@ -35,7 +35,7 @@ sem alteração de tipos (tudo como a API retorna).
 | `descricao_modalidade`, `descricao_tipo`, `tipo_objeto`, `descricao_objeto` | API | Classificação |
 | `descricao_situacao`, `infringement_status`, `accountability_status`, `emergency` | API | Status |
 
-**Colunas mínimas exigidas pelo `bronze_validator`:** `id`, `num_contrato`, `valor_contrato`, `data_assinatura`, `cod_gestora`.
+**Colunas mínimas exigidas pelo `bronze_validator`:** `id`, `valor_contrato`, `data_assinatura`, `cod_gestora`. `num_contrato` NÃO é exigido — contratos por dispensa/inexigibilidade sem instrumento formal vêm legitimamente com `num_contrato=null` na API real (confirmado em produção em 24/07/2026).
 
 ### `empenhos/` — PostgreSQL de origem
 

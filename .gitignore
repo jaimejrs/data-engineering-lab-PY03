@@ -15,5 +15,16 @@ venv/
 # Notebooks
 .ipynb_checkpoints/
 
-# Documentação de trabalho interna — não faz parte dos entregáveis do repositório
+# Documentação de trabalho interna
 docs/
+
+# Apresentação HTML
+apresentacao/
+
+# Artefatos de modelos treinados (binários grandes, reproduzíveis a partir do código)
+models/artifacts/
+
+# Artefatos locais do dbt (gerados por `dbt parse`/`dbt build`, não é código-fonte)
+dbt/target/
+dbt/logs/
+dbt/.user.yml

@@ -81,3 +81,33 @@ models:
           - relationships:
               to: ref('dim_tempo')
               field: sk_tempo
+
+  - name: fato_ordem_bancaria
+    description: "Fato de ordens bancárias (pagamento efetivo ao credor) — 3º estágio da despesa (contrato -> empenho -> ordem bancária). Item 3 de docs/06-analise-critica.md."
+    columns:
+      - name: id_ob_origem
+        tests: [not_null]
+      - name: ano
+        tests: [not_null]
+      - name: sk_orgao
+        tests:
+          - relationships:
+              to: ref('dim_orgao')
+              field: sk_orgao
+      - name: sk_tempo
+        tests:
+          - relationships:
+              to: ref('dim_tempo')
+              field: sk_tempo
+
+  - name: gold_reconciliacao
+    description: "Cobertura de join e reconciliação Silver -> Gold por fato — itens 4/6 de docs/06-analise-critica.md. Ver dbt/tests/assert_cobertura_gold_minima.sql."
+    columns:
+      - name: tabela
+        tests: [not_null, unique]
+
+  - name: bronze_silver_reconciliacao
+    description: "Reconciliação Bronze -> Silver para as fontes incrementais — item 6 de docs/06-analise-critica.md. Ver dbt/tests/assert_reconciliacao_bronze_silver.sql."
+    columns:
+      - name: fonte
+        tests: [not_null, unique]

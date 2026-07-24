@@ -69,3 +69,35 @@ cd /home/dataadm && docker compose up -d airflow-webserver airflow-scheduler
   dbt manualmente (`docker compose run --rm dbt build`).
 - **Spark no cluster:** com o wiring, a Silver passa a rodar via `SparkSubmitOperator`
   no cluster standalone (client mode), não mais em `local[*]`.
+
+## Addendum — DAG 4 (`ml_inference`), tarefas 20–24
+
+A wiring acima cobre só as DAGs 2/3. Pra rodar a DAG 4 (Modelo 1 + Modelo 2, ver
+`dags/dag_ml_inference.py`) no Airflow do servidor, falta:
+
+```bash
+# 1. Rebuild da imagem — agora com scikit-learn/xgboost/trino (docker/airflow/requirements.txt).
+docker build --network=host -t datalab-airflow:local /home/dataadm/lakehouse-airflow-build/docker/airflow
+
+# 2. Sincronizar código novo:
+#    - DAG:    dags/dag_ml_inference.py (e dags/common.py atualizado)
+#    - modelo: models/ inteiro (trino_io.py, anomaly_detection.py, payment_forecast.py, __init__.py)
+#    (via scp para /home/dataadm/airflow/{dags,models})
+
+# 3. Ajustar o compose do time — adicionar ao serviço airflow-scheduler (e webserver):
+#      environment:
+#        - TRINO_HOST=trino
+#        - TRINO_PORT=8080
+#        - TRINO_USER=airflow
+#        - TRINO_CATALOG=iceberg
+#      volumes:
+#        - /home/dataadm/airflow/models:/opt/airflow/models
+
+# 4. Recriar os serviços do Airflow (mesmo passo 5 acima) e validar: DAG 4 aparece,
+#    dispara por Dataset (gold://ready, emitido pela DAG 3) e as tasks
+#    `score_anomalias`/`prever_pagamentos`/`refresh_fato_contrato` completam com sucesso.
+```
+
+Os artefatos treinados (`models/artifacts/*.joblib`) ficam no filesystem do
+scheduler — não versionados, recriados a cada execução da DAG. Não precisam de
+sincronização manual.

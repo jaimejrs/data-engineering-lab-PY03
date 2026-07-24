@@ -16,3 +16,14 @@ pyspark==3.5.3
 
 # DAG 3 dispara o dbt (imagem datalab-dbt) via DockerOperator.
 apache-airflow-providers-docker==3.12.0
+
+# DAG 4 (ml_inference) — Modelo 1 (Isolation Forest) e Modelo 2 (XGBoost
+# quantile) rodam direto na imagem do Airflow via PythonOperator, mesmo padrão
+# da DAG 1 (import direto de src/extractors) — sem puxar um container extra só
+# pra isso, ao contrário de Spark/dbt (esses sim pesados o bastante pra
+# justificar DockerOperator). Ver models/anomaly_detection.py e
+# models/payment_forecast.py.
+scikit-learn==1.5.0
+joblib==1.4.2
+xgboost==2.0.3
+trino==0.328.0

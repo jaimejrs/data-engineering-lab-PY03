@@ -5,35 +5,38 @@ Escopo: orquestra a transformação Bronze -> Silver (normalização de datas,
 CNPJ/CPF, dedup e particionamento) logo após a Bronze de uma `data_extracao`
 ser validada pela DAG 1.
 
-Arquitetura lakehouse (Spark + Iceberg + HDFS, catálogo Hive Metastore): a
-transformação roda como job PySpark (`src/spark_jobs/silver_job.py`) submetido a
-um cluster Spark standalone via `SparkSubmitOperator` (client mode). O job grava
-tabelas Iceberg `lakehouse.silver.*` e faz `MERGE INTO` pela chave de negócio —
-deduplicando **entre execuções**, não só dentro de uma (ver
-`documentacao/lakehouse-spark-iceberg.md`).
+Execução via **DockerOperator** na imagem `datalab-spark:local` (runtime Spark
+comprovado — Java 17 + Spark 3.5.3 + jar do Iceberg baked), rodando o
+`silver_job.py` em `spark-submit local[*]`. Optou-se por DockerOperator (em vez
+de SparkSubmitOperator client-mode) porque a imagem do Airflow não é um bom
+runtime Spark e o client-mode entre containers tinha problemas de rede de
+executores — ver docs/06. O job faz `MERGE INTO` nas tabelas Iceberg
+(idempotente / dedup entre execuções).
 
 Disparo: por Dataset (`BRONZE_VALIDATED_DATASET`, emitido por `advance_watermark`
 da DAG 1). Ao terminar, emite `SILVER_READY_DATASET`, que dispara a DAG 3 (Gold).
-`--run-date` vem da Airflow Variable de watermark (mesma `data_extracao` que a
-DAG 1 acabou de validar) — não do `ds` do disparo por Dataset.
+`--run-date` vem da Airflow Variable de watermark.
 """
 
+import os
+import sys
 from datetime import datetime, timedelta
 
 from airflow.decorators import dag
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.providers.docker.operators.docker import DockerOperator
+from docker.types import Mount
 
-from dags.common import (
+# Garante `dags`/`src` importáveis sob o parsing isolado do Airflow.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from dags.common import (  # noqa: E402
     BRONZE_VALIDATED_DATASET,
+    DBT_DOCKER_NETWORK,
     SILVER_READY_DATASET,
-    SPARK_EXTRA_JARS,
-    SPARK_SUBMIT_CONF,
     WATERMARK_VARIABLE,
 )
-
-# run-date = mesma data_extracao que a DAG 1 validou (Airflow Variable de watermark),
-# renderizada por Jinja no submit — não o `ds` do disparo por Dataset.
-RUN_DATE_TEMPLATE = f"{{{{ var.value.{WATERMARK_VARIABLE} }}}}"
 
 default_args = {
     "owner": "jaime",
@@ -42,10 +45,25 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
+RUN_DATE_TEMPLATE = f"{{{{ var.value.{WATERMARK_VARIABLE} }}}}"
+
+# Diretório do `src` no host (para o bind-mount do container Spark). No servidor,
+# /home/dataadm/lakehouse/src; no stack autônomo, ajuste conforme o host.
+LAKEHOUSE_SRC_DIR = os.environ.get("LAKEHOUSE_SRC_DIR", "/home/dataadm/lakehouse/src")
+
+# Config do lakehouse repassada ao container Spark (lida pelo spark_session).
+SPARK_JOB_ENV = {
+    "HIVE_METASTORE_URI": os.environ.get("HIVE_METASTORE_URI", "thrift://hive-metastore:9083"),
+    "ICEBERG_WAREHOUSE": os.environ.get("ICEBERG_WAREHOUSE", "hdfs://namenode:9000/warehouse"),
+    "HDFS_DEFAULT_FS": os.environ.get("HDFS_DEFAULT_FS", "hdfs://namenode:9000"),
+    "BRONZE_BASE_PATH": os.environ.get("BRONZE_BASE_PATH", "/bronze"),
+    "HADOOP_USER_NAME": os.environ.get("HADOOP_USER_NAME", "root"),
+}
+
 
 @dag(
     dag_id="silver_transform",
-    description="DAG 2 — Bronze -> Silver (Iceberg) via Spark",
+    description="DAG 2 — Bronze -> Silver (Iceberg) via Spark (DockerOperator)",
     default_args=default_args,
     schedule=[BRONZE_VALIDATED_DATASET],
     start_date=datetime(2026, 7, 1),
@@ -54,15 +72,22 @@ default_args = {
     tags=["silver", "transformacao", "iceberg", "spark", "fase-2"],
 )
 def silver_transform():
-    SparkSubmitOperator(
+    DockerOperator(
         task_id="transform",
-        application="/opt/airflow/src/spark_jobs/silver_job.py",
-        conn_id="spark_default",
-        deploy_mode="client",
-        name="silver_transform",
-        application_args=["--run-date", RUN_DATE_TEMPLATE],
-        jars=SPARK_EXTRA_JARS,
-        conf=SPARK_SUBMIT_CONF,
+        image="datalab-spark:local",
+        # Runtime Spark da imagem; local[*] (sem cluster) -> sem rede de executores.
+        entrypoint=["/opt/spark/bin/spark-submit"],
+        command=[
+            "--driver-memory", "4g",
+            "/opt/datalab/src/spark_jobs/silver_job.py",
+            "--run-date", RUN_DATE_TEMPLATE,
+        ],
+        environment=SPARK_JOB_ENV,
+        mounts=[Mount(source=LAKEHOUSE_SRC_DIR, target="/opt/datalab/src", type="bind", read_only=True)],
+        network_mode=DBT_DOCKER_NETWORK,
+        docker_url="unix://var/run/docker.sock",
+        auto_remove="success",
+        mount_tmp_dir=False,
         outlets=[SILVER_READY_DATASET],
     )
 

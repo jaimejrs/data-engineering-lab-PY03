@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Tabelas Iceberg da camada Silver, escritas pelo Spark (src/spark_jobs/silver_job.py)."
+    database: iceberg   # dbt-trino: database == catálogo Trino
+    schema: silver
+    tables:
+      - name: empenhos
+      - name: ordem_bancaria_orcamentaria
+      - name: unidade_gestora
+      - name: contratos

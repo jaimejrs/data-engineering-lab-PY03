@@ -1,0 +1,98 @@
+# Overlay lakehouse para o SERVIDOR (aditivo). Sobe HMS + Spark + Trino + dbt na
+# rede existente `dataadm_default`, apontando para o HDFS `hadoop:9000` (aula_hadoop)
+# e o Postgres `postgres` (datalab_postgres) que já rodam. NÃO toca no Airflow atual.
+name: lakehouse
+
+services:
+  hive-metastore:
+    build:
+      context: ./docker/hive
+      network: host
+      args:
+        HDFS_HOST: hadoop
+        METASTORE_DB_HOST: postgres
+    image: datalab-hive-metastore:local
+    container_name: lakehouse_hive_metastore
+    mem_limit: 2g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083' 2>/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  spark-master:
+    build:
+      context: ./docker/spark
+      network: host
+    image: datalab-spark:local
+    container_name: lakehouse_spark_master
+    mem_limit: 8g
+    cpus: 3.0
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8081"]
+    environment: &spark-env
+      HIVE_METASTORE_URI: thrift://hive-metastore:9083
+      ICEBERG_WAREHOUSE: hdfs://hadoop:9000/warehouse
+      HDFS_DEFAULT_FS: hdfs://hadoop:9000
+      BRONZE_BASE_PATH: /bronze
+      HADOOP_USER_NAME: root
+    volumes:
+      - ./src:/opt/datalab/src
+      - ./dbt:/opt/datalab/dbt
+    depends_on:
+      - hive-metastore
+    restart: unless-stopped
+
+  spark-worker:
+    image: datalab-spark:local
+    container_name: lakehouse_spark_worker
+    mem_limit: 10g
+    cpus: 4.0
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
+    environment: *spark-env
+    volumes:
+      - ./src:/opt/datalab/src
+    depends_on:
+      - spark-master
+    restart: unless-stopped
+
+  trino:
+    build:
+      context: ./docker/trino
+      network: host
+      args:
+        HDFS_HOST: hadoop
+    image: datalab-trino:local
+    container_name: lakehouse_trino
+    mem_limit: 6g
+    cpus: 3.0
+    environment:
+      - HADOOP_USER_NAME=root
+    ports:
+      - "8085:8080"
+    depends_on:
+      - hive-metastore
+    restart: unless-stopped
+
+  # dbt (adapter Trino) — sob demanda: `docker compose run --rm dbt build`.
+  dbt:
+    build:
+      context: ./dbt
+      network: host
+    image: datalab-dbt:local
+    container_name: lakehouse_dbt
+    profiles: ["tools"]
+    volumes:
+      - ./dbt:/dbt
+    depends_on:
+      - trino
+    command: ["build"]
+
+networks:
+  default:
+    external: true
+    name: dataadm_default

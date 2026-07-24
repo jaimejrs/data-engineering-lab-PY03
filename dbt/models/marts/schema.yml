@@ -1,0 +1,83 @@
+version: 2
+
+models:
+  - name: dim_credor
+    description: "Dimensão de credores — SCD2 (versões por cnpj_cpf via snapshot scd_credor)."
+    columns:
+      - name: sk_credor
+        tests: [not_null, unique]   # única por versão (inclui valido_de)
+      - name: cnpj_cpf
+        tests: [not_null]
+      - name: tipo
+        tests:
+          - accepted_values:
+              values: ['PF', 'PJ', 'INVALIDO']
+
+  - name: dim_orgao
+    description: "Dimensão de órgãos/unidades gestoras (uma linha por codigo+ano)."
+    columns:
+      - name: sk_orgao
+        tests: [not_null, unique]
+      - name: codigo
+        tests: [not_null]
+      - name: ano
+        tests: [not_null]
+
+  - name: dim_modalidade
+    columns:
+      - name: sk_modalidade
+        tests: [not_null, unique]
+      - name: descricao_modalidade
+        tests: [not_null]
+
+  - name: dim_tempo
+    columns:
+      - name: sk_tempo
+        tests: [not_null, unique]
+      - name: data
+        tests: [not_null]
+
+  - name: fato_contrato
+    description: "Fato de contratos. SK nulas = sem match na dimensão (join fraco)."
+    columns:
+      - name: id_contrato_origem
+        tests: [not_null]
+      - name: ano
+        tests: [not_null]
+      - name: sk_credor
+        tests:
+          - relationships:
+              to: ref('dim_credor')
+              field: sk_credor
+      - name: sk_orgao
+        tests:
+          - relationships:
+              to: ref('dim_orgao')
+              field: sk_orgao
+      - name: sk_modalidade
+        tests:
+          - relationships:
+              to: ref('dim_modalidade')
+              field: sk_modalidade
+      - name: sk_tempo
+        tests:
+          - relationships:
+              to: ref('dim_tempo')
+              field: sk_tempo
+
+  - name: fato_empenho
+    columns:
+      - name: id_empenho_origem
+        tests: [not_null]
+      - name: ano
+        tests: [not_null]
+      - name: sk_orgao
+        tests:
+          - relationships:
+              to: ref('dim_orgao')
+              field: sk_orgao
+      - name: sk_tempo
+        tests:
+          - relationships:
+              to: ref('dim_tempo')
+              field: sk_tempo

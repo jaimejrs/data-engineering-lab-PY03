@@ -1,0 +1,17 @@
+name: 'ceara_lakehouse'
+version: '1.0.0'
+config-version: 2
+
+profile: 'ceara_lakehouse'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+
+models:
+  ceara_lakehouse:
+    # Staging: CTEs inlinadas (sem objeto no catálogo).
+    staging:
+      +materialized: ephemeral
+    # Marts (dims/fatos): tabelas Iceberg no catálogo `iceberg`, schema `gold`.
+    marts:
+      +materialized: table

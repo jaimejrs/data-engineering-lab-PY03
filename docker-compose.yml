@@ -1,3 +1,8 @@
+# Stack autônomo/reprodutível (HDFS próprio: namenode/datanode). O deploy no
+# servidor do curso usa um overlay sobre a infra existente — ver
+# deploy/server-lakehouse/. O hostname do HDFS é parametrizável por HDFS_HOST
+# (default `namenode` aqui; `hadoop` no servidor), permitindo um único conjunto
+# de arquivos/configs servir as duas topologias.
 services:
   postgres:
     image: postgres:15
@@ -10,27 +15,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Provisiona o DB `metastore` do Hive (só em volume novo — ver
+      # docker/postgres-init/01-metastore.sql para o fallback manual).
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dlab -d datalab"]
-      interval: 10s
-      retries: 5
-      start_period: 5s
-
-  postgres_dw:
-    image: postgres:15
-    container_name: datalab_postgres_dw
-    environment:
-      POSTGRES_USER: dw_user
-      POSTGRES_PASSWORD: dw_password
-      POSTGRES_DB: ceara_dw
-    ports:
-      - "5434:5432"
-    volumes:
-      - postgres_dw_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dw_user -d ceara_dw"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -71,8 +61,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      postgres_dw:
-        condition: service_healthy
     environment: &airflow-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://dlab:d123@postgres:5432/datalab
@@ -82,9 +70,10 @@ services:
       BRONZE_BASE_PATH: /bronze
       SILVER_STORAGE_BACKEND: hdfs
       SILVER_BASE_PATH: /silver
-      HDFS_WEBHDFS_URL: http://namenode:9870
+      HDFS_WEBHDFS_URL: http://${HDFS_HOST:-namenode}:9870
       HDFS_USER: root
-      DW_POSTGRES_URL: postgresql://dw_user:dw_password@postgres_dw:5432/ceara_dw
+      # Conexão usada pelo SparkSubmitOperator (DAG 2) — cluster standalone.
+      AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
     entrypoint: /bin/bash
     command:
       - -c
@@ -97,7 +86,7 @@ services:
   airflow-webserver:
     build:
       context: ./docker/airflow
-      network: host  # necessário em hosts sem egress para as redes bridge do Docker (ver docker/airflow/README.md)
+      network: host
     image: datalab-airflow:local
     container_name: datalab_airflow_webserver
     command: webserver
@@ -123,7 +112,7 @@ services:
   airflow-scheduler:
     build:
       context: ./docker/airflow
-      network: host  # necessário em hosts sem egress para as redes bridge do Docker (ver docker/airflow/README.md)
+      network: host
     image: datalab-airflow:local
     container_name: datalab_airflow_scheduler
     command: scheduler
@@ -138,6 +127,9 @@ services:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - airflow_logs:/opt/airflow/logs
+      # DAG 3 dispara o dbt via DockerOperator (imagem datalab-dbt) -> precisa do
+      # socket do Docker. Ver documentacao/gold-dbt-trino.md (permissão do socket).
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
   jupyter:
@@ -150,7 +142,7 @@ services:
       - SOURCE_POSTGRES_URL=${SOURCE_POSTGRES_URL:-postgresql://usuario:senha@host:5432/ceara_transparente}
       - BRONZE_STORAGE_BACKEND=hdfs
       - BRONZE_BASE_PATH=/bronze
-      - HDFS_WEBHDFS_URL=http://namenode:9870
+      - HDFS_WEBHDFS_URL=http://${HDFS_HOST:-namenode}:9870
       - HDFS_USER=root
     volumes:
       - ./notebooks:/home/jovyan/work/notebooks
@@ -159,9 +151,121 @@ services:
       - namenode
     restart: unless-stopped
 
+  hive-metastore:
+    build:
+      context: ./docker/hive
+      network: host  # host só tem IPv6; ver docker/airflow/README.md
+      args:
+        HDFS_HOST: ${HDFS_HOST:-namenode}
+        METASTORE_DB_HOST: ${METASTORE_DB_HOST:-postgres}
+    image: datalab-hive-metastore:local
+    container_name: datalab_hive_metastore
+    mem_limit: 2g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083' 2>/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_started
+    ports:
+      - "9083:9083"
+    restart: unless-stopped
+
+  spark-master:
+    build:
+      context: ./docker/spark
+      network: host
+    image: datalab-spark:local
+    container_name: datalab_spark_master
+    mem_limit: 8g
+    cpus: 3.0
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8081"]
+    environment: &spark-env
+      HIVE_METASTORE_URI: thrift://hive-metastore:9083
+      ICEBERG_WAREHOUSE: hdfs://${HDFS_HOST:-namenode}:9000/warehouse
+      HDFS_DEFAULT_FS: hdfs://${HDFS_HOST:-namenode}:9000
+      BRONZE_BASE_PATH: /bronze
+      # HDFS roda como root/superusuário; sem isto, escrever no /warehouse falha.
+      HADOOP_USER_NAME: root
+    ports:
+      - "7077:7077"
+      - "8081:8081"
+    depends_on:
+      - namenode
+      - hive-metastore
+    # Repo montado para execução manual/debug de jobs direto no cluster (local[*]).
+    volumes:
+      - ./src:/opt/datalab/src
+    restart: unless-stopped
+
+  spark-worker:
+    build:
+      context: ./docker/spark
+      network: host
+    image: datalab-spark:local
+    container_name: datalab_spark_worker
+    mem_limit: 10g
+    cpus: 4.0
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
+    environment: *spark-env
+    ports:
+      - "8082:8081"
+    depends_on:
+      - spark-master
+    volumes:
+      - ./src:/opt/datalab/src
+    restart: unless-stopped
+
+  trino:
+    build:
+      context: ./docker/trino
+      network: host
+      args:
+        HDFS_HOST: ${HDFS_HOST:-namenode}
+    image: datalab-trino:local
+    container_name: datalab_trino
+    mem_limit: 6g
+    cpus: 3.0
+    environment:
+      HADOOP_USER_NAME: root  # escrever a Gold Iceberg no HDFS como superusuário
+    depends_on:
+      - hive-metastore
+      - namenode
+    ports:
+      - "8085:8080"  # UI/HTTP do Trino (8080 já é do Airflow no host)
+    restart: unless-stopped
+
+  # dbt (adapter Trino) — não sobe no `up` (profile "tools"); é buildado e rodado
+  # sob demanda: `docker compose run --rm dbt build`, ou pela DAG 3 via DockerOperator.
+  dbt:
+    build:
+      context: ./dbt
+      network: host
+    image: datalab-dbt:local
+    container_name: datalab_dbt
+    profiles: ["tools"]
+    depends_on:
+      - trino
+    volumes:
+      - ./dbt:/dbt
+    command: ["build"]
+
+# Nome de rede fixo para o DockerOperator da DAG 3 referenciar de forma
+# determinística (network_mode="datalab_net").
+networks:
+  default:
+    name: datalab_net
+
 volumes:
   postgres_data:
-  postgres_dw_data:
   hadoop_namenode:
   hadoop_datanode:
   airflow_logs:

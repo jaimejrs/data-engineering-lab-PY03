@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    name: pytest + compile jobs Spark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instala dependências de teste (subset leve)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest
+      - name: pytest (regras/normalização/extractors)
+        run: pytest -q
+      - name: Compila os jobs PySpark (sintaxe; pyspark não instalado)
+        run: python -m py_compile src/spark_jobs/*.py
+
+  dbt:
+    name: dbt parse (valida projeto/modelos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instala dbt-trino
+        run: pip install "dbt-trino==1.8.4"
+      - name: dbt parse (não conecta ao Trino — valida refs/macros/testes)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+        run: dbt parse

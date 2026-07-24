@@ -1,7 +1,9 @@
 # Diagrama de Arquitetura — Pipeline Ceará Transparente
 
-Última atualização: 19/07/2026. Status por componente conforme o [`checklist`](../docs/checklist.md)
+Última atualização: 22/07/2026. Status por componente conforme o [`checklist`](../docs/checklist.md)
 interno da equipe (não versionado) — aqui mantemos apenas o retrato público da arquitetura.
+Evolução para **lakehouse** (Silver em Iceberg, Spark, Hive Metastore) documentada em
+[`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md).
 
 ## Visão geral (Medallion: Bronze → Silver → Gold → ML/IA)
 
@@ -19,11 +21,11 @@ flowchart LR
         B_UG[("unidade_gestora/")]
     end
 
-    subgraph Silver["Silver — HDFS Parquet (limpo, dedup, tipado)"]
-        S["particionado ano/mês"]
+    subgraph Silver["Silver — Iceberg (HDFS + Hive Metastore)"]
+        S["lakehouse.silver.*\nMERGE INTO · snapshots · particionado ano/mês"]
     end
 
-    subgraph Gold["Gold — PostgreSQL DW (dimensional)"]
+    subgraph Gold["Gold — Iceberg (HDFS) via dbt-trino"]
         DIM["dim_credor · dim_orgao\ndim_modalidade · dim_tempo"]
         FATO["fato_contrato · fato_empenho"]
     end
@@ -70,11 +72,11 @@ flowchart TB
         d1b[extract_api] --> d1c
         d1c --> d1d[advance_watermark]
     end
-    subgraph DAG2["DAG 2 — Silver (não implementada)"]
-        d2a[bronze_to_silver]
+    subgraph DAG2["DAG 2 — Silver (SparkSubmitOperator -> silver_job.py)"]
+        d2a[transform: Bronze -> Iceberg MERGE]
     end
-    subgraph DAG3["DAG 3 — Gold (não implementada)"]
-        d3a[dw_loader]
+    subgraph DAG3["DAG 3 — Gold (DockerOperator -> dbt build)"]
+        d3a[dbt-trino: Silver Iceberg -> Gold Iceberg]
     end
     subgraph DAG4["DAG ML (não implementada)"]
         d4a[anomaly_detection]
@@ -89,12 +91,18 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph Docker["docker-compose.yml"]
-        PG_META[("postgres\n(metadados Airflow +\nfutura Gold/DW)")]
+        PG_META[("postgres\n(metadados Airflow +\nDB metastore do Hive)")]
+        PG_DW[("postgres_dw :5434\n(Gold/DW)")]
         NN["namenode\n(HDFS, WebHDFS :9870)"]
         DN["datanode"]
         AF_INIT["airflow-init"]
         AF_WEB["airflow-webserver :8080"]
-        AF_SCH["airflow-scheduler"]
+        AF_SCH["airflow-scheduler\n(spark-submit / DockerOperator)"]
+        SM["spark-master :7077"]
+        SW["spark-worker (executores)"]
+        HMS["hive-metastore :9083"]
+        TR["trino :8085\n(connector Iceberg)"]
+        DBT["dbt-trino\n(container sob demanda)"]
         JUP["jupyter :8888"]
     end
     SRC_PG["PostgreSQL de origem\n(externo — infra do curso)"]
@@ -102,7 +110,16 @@ flowchart LR
 
     AF_SCH -->|extract_postgres| SRC_PG
     AF_SCH -->|extract_api| SRC_API
-    AF_SCH -->|grava Bronze/Silver| NN
+    AF_SCH -->|grava Bronze JSON| NN
+    AF_SCH -->|DAG2: submit Silver| SM --> SW
+    AF_SCH -->|DAG3: dispara dbt| DBT --> TR
+    SW -->|dados Iceberg Silver| NN
+    TR -->|Gold Iceberg| NN
+    SM -->|catálogo| HMS
+    TR -->|catálogo| HMS
+    HMS -->|warehouse + metadados| PG_META
+    HMS -->|warehouse| NN
+    TR -.->|federação opcional| PG_DW
     NN --- DN
     AF_WEB --> PG_META
     AF_SCH --> PG_META
@@ -121,14 +138,15 @@ flowchart LR
 > [`workaround-egress-ipv4-api.md`](workaround-egress-ipv4-api.md) para o mecanismo
 > completo e a limitação (depende de uma máquina do time estar ligada).
 
-## Status resumido (19/07/2026)
+## Status resumido (22/07/2026)
 
 | Camada/Componente | Status |
 |---|---|
 | Bronze — `empenhos`, `ordem_bancaria_orcamentaria`, `unidade_gestora` | ✅ Validado no HDFS real |
 | Bronze — `contratos` (API) | ✅ Validado dentro do Airflow (19/07 — via relay, ver nota acima) |
 | DAG 1 (`bronze_extract`) no Airflow | ✅ 4/4 tasks com sucesso ponta a ponta (`extract_postgres`, `extract_api`, `validate`, `advance_watermark`) — primeira execução 100% dentro do Airflow |
-| Silver | ⚪ Não iniciada |
-| Gold (DW) | ⚪ Não iniciada — nenhuma tabela dimensional/fato existe ainda |
+| Silver — **Iceberg via Spark** (`silver_job.py`, `MERGE INTO`) | 🟠 Implementada; validação ponta a ponta no cluster pendente (ver [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md)) |
+| Gold — **Iceberg via dbt-trino** (`dbt/`, dims/fatos + testes) | 🟠 Implementada; validação ponta a ponta pendente (ver [`gold-dbt-trino.md`](gold-dbt-trino.md)) |
+| Cluster Spark + Hive Metastore + Trino + tabelas Iceberg (HDFS) | 🟠 Adicionados ao `docker-compose.yml`; wiring de versões/classpath a validar com o stack no ar |
 | ML/IA | ⚪ Não iniciada |
-| `docker-compose.yml` reproduzível | ✅ Adicionado (Postgres, Hadoop NameNode/DataNode, Airflow com imagem custom, Jupyter) |
+| `docker-compose.yml` reproduzível | ✅ Postgres (+DB metastore), Hadoop NN/DN, Airflow custom, Jupyter, **spark-master/worker**, **hive-metastore**, **trino**, **dbt** |

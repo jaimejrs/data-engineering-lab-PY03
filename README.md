@@ -54,15 +54,24 @@ Isso deixa a futura DAG de extração incremental (Membro 1) tocando só na(s) p
 
 `docker-compose.yml` na raiz sobe o stack completo: PostgreSQL, Hadoop (NameNode +
 DataNode), Airflow (webserver + scheduler, com imagem custom em `docker/airflow/`
-contendo as dependências dos extractors) e Jupyter.
+contendo as dependências dos extractors), Jupyter e — para a arquitetura
+**lakehouse** — cluster Spark (master + worker), Hive Metastore e Trino.
 
 ```bash
 docker compose up -d --build
 ```
 
 Acesse Airflow em `http://localhost:8080` (usuário/senha criados por `airflow-init`:
-`admin`/`admin`) e o HDFS em `http://localhost:9870`. `SOURCE_POSTGRES_URL` (banco de
-origem) é externo a este compose — ver `.env.example`.
+`admin`/`admin`), o HDFS em `http://localhost:9870` e a UI do Spark master em
+`http://localhost:8081`. `SOURCE_POSTGRES_URL` (banco de origem) é externo a este
+compose — ver `.env.example`.
+
+> **Lakehouse (Iceberg + Spark + Trino, catálogo Hive Metastore):** a **Silver**
+> virou tabelas Iceberg sobre o HDFS, escritas por Spark (DAG 2, `MERGE INTO`) —
+> [`documentacao/lakehouse-spark-iceberg.md`](documentacao/lakehouse-spark-iceberg.md).
+> A **Gold** virou modelos **dbt-trino** materializados em Iceberg (`iceberg.gold.*`),
+> servidos pelo Trino (DAG 3) —
+> [`documentacao/gold-dbt-trino.md`](documentacao/gold-dbt-trino.md).
 
 > Se o build falhar com erro de DNS (`Temporary failure in name resolution`) em um host
 > com egress restrito para as redes bridge do Docker, ver `docker/airflow/README.md`.

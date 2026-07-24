@@ -127,8 +127,14 @@ backfill manual reprocessando um período já coberto por outra execução), o m
 aparece duas vezes no histórico consolidado da Silver. Isso quebrou a carga do DW
 (`psycopg2.errors.CardinalityViolation: ON CONFLICT DO UPDATE command cannot affect row a
 second time`) até o `dw_loader.py` passar a dedupar de novo por `(id, ano)`/`id` antes de
-montar os fatos. **Ainda em aberto:** a Silver em si não resolve isso — cada execução nova
-continua podendo gravar registros repetidos; o dedup de fato só acontece na borda do DW.
+montar os fatos.
+
+**Resolvido na arquitetura lakehouse (Spark + Iceberg):** a Silver passou a ser tabela
+Iceberg gravada por `src/spark_jobs/silver_job.py` com **`MERGE INTO`** pela mesma chave
+lógica (`(id, ano)` / `id` / `(codigo, ano)`) — o dedup agora acontece **entre execuções**,
+na própria Silver, não só na borda do DW. O caminho pandas legado (`silver_transformer.py`,
+backend `local`/dev) mantém a limitação anterior (dedup só dentro de uma `data_extracao`).
+Ver [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md).
 Também descoberto na mesma carga: ~120 mil datas de `contratos` (campos além de
 `data_assinatura`, ex. `data_termino`/`data_rescisao`) vêm em `ISO 8601` com timezone
 (`2026-02-22T00:00:00.000-03:00`) em vez de `DD/MM/YYYY` — `silver_transformer.py` já trata
@@ -147,6 +153,16 @@ Modelo dimensional (estrela), schema `dw` no Postgres `datalab_postgres_dw` (por
 container dedicado). DDL completo em [`sql/ddl_dw.sql`](../sql/ddl_dw.sql); carga via
 `src/loaders/dw_loader.py` (`python -m src.loaders.dw_loader`), idempotente (upsert por chave
 de negócio). Contagens da carga completa (19/07/2026) entre parênteses.
+
+> **Evolução para lakehouse (Gold em Iceberg via dbt-trino):** a Gold passou a ser
+> construída de forma declarativa por dbt-trino e materializada como **tabelas
+> Iceberg** `iceberg.gold.*` no HDFS (mesmo esquema estrela), servida pelo Trino —
+> ver [`gold-dbt-trino.md`](gold-dbt-trino.md). Duas diferenças de modelagem em
+> relação ao schema Postgres descrito abaixo: (1) as **surrogate keys viram hash
+> `md5`** da chave natural (Iceberg não tem `BIGSERIAL`), e (2) as **constraints
+> (PK/FK/unique) viram testes dbt** (`schema.yml`). A regra de negócio de cada
+> dim/fato é a mesma de `dw_loader.py`, que fica como referência/legado (o Postgres
+> DW vira espelho opcional). As colunas abaixo seguem válidas como contrato lógico.
 
 ### `dim_credor` (SCD2) — 10.612 linhas
 

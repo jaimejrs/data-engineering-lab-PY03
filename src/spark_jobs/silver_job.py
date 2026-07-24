@@ -171,13 +171,17 @@ def write_source(spark, source: str, df) -> None:
             spark.sql(f"ALTER TABLE {fqn} ADD COLUMN `{field.name}` {field.dataType.simpleString()}")
             target_fields[field.name] = field.dataType
 
-    # Alinha o lote ao schema completo do alvo (colunas ausentes -> NULL tipado)
-    # para o UPDATE SET * / INSERT * do MERGE casarem coluna a coluna.
-    aligned = df
-    for name, dtype in target_fields.items():
-        if name not in aligned.columns:
-            aligned = aligned.withColumn(name, F.lit(None).cast(dtype))
-    aligned = aligned.select(*target_fields.keys())
+    # Alinha o lote ao schema do alvo, fazendo CAST de cada coluna para o tipo
+    # da tabela (colunas ausentes -> NULL tipado). Necessário porque a inferência
+    # de tipo do JSON varia entre lotes (ex: has_non_profit_transfer ora STRING
+    # ora BOOLEAN) — sem o cast, o UPDATE SET */INSERT * do MERGE falha com
+    # INCOMPATIBLE_DATA_FOR_TABLE. `cast` best-effort: valor incompatível vira NULL.
+    aligned = df.select(
+        *[
+            (F.col(name) if name in df.columns else F.lit(None)).cast(dtype).alias(name)
+            for name, dtype in target_fields.items()
+        ]
+    )
     aligned.createOrReplaceTempView("_silver_batch")
 
     on_clause = " AND ".join(f"t.`{k}` <=> s.`{k}`" for k in keys)

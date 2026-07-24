@@ -19,12 +19,19 @@ Substitui a carga imperativa anterior (`gold_job.py`/`dw_loader.py`, agora legad
 Disparo: por Dataset (`SILVER_READY_DATASET`).
 """
 
+import os
+import sys
 from datetime import datetime, timedelta
 
 from airflow.decorators import dag
 from airflow.providers.docker.operators.docker import DockerOperator
 
-from dags.common import DBT_DOCKER_NETWORK, SILVER_READY_DATASET
+# Garante `dags`/`src` importáveis sob o parsing isolado do Airflow.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from dags.common import DBT_DOCKER_NETWORK, SILVER_READY_DATASET  # noqa: E402
 
 default_args = {
     "owner": "jaime",

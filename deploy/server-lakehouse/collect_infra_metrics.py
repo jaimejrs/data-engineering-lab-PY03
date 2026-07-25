@@ -46,10 +46,14 @@ CREATE TABLE IF NOT EXISTS {CATALOG_SCHEMA}.infra_metricas_disco (
 # tendência/alerta, não auditoria de byte exato).
 UNIT_MULTIPLIERS = {
     "b": 1,
-    "kib": 1024, "kb": 1024,
-    "mib": 1024**2, "mb": 1024**2,
-    "gib": 1024**3, "gb": 1024**3,
-    "tib": 1024**4, "tb": 1024**4,
+    "kib": 1024,
+    "kb": 1024,
+    "mib": 1024**2,
+    "mb": 1024**2,
+    "gib": 1024**3,
+    "gb": 1024**3,
+    "tib": 1024**4,
+    "tb": 1024**4,
 }
 
 
@@ -82,23 +86,34 @@ def collect_container_stats() -> list[dict]:
             continue
         data = json.loads(line)
         mem_used_str, _, mem_limit_str = data["MemUsage"].partition("/")
-        rows.append({
-            "container": data["Name"],
-            "cpu_percent": parse_percent(data["CPUPerc"]),
-            "mem_usage_bytes": parse_size(mem_used_str),
-            "mem_limit_bytes": parse_size(mem_limit_str),
-            "mem_percent": parse_percent(data["MemPerc"]),
-        })
+        rows.append(
+            {
+                "container": data["Name"],
+                "cpu_percent": parse_percent(data["CPUPerc"]),
+                "mem_usage_bytes": parse_size(mem_used_str),
+                "mem_limit_bytes": parse_size(mem_limit_str),
+                "mem_percent": parse_percent(data["MemPerc"]),
+            }
+        )
     return rows
 
 
 def collect_disk_stats() -> list[dict]:
     """Uso de disco por ponto de montagem real do host (exclui tmpfs/overlay/squashfs
     — filesystems virtuais que não representam disco físico do servidor)."""
-    output = run([
-        "df", "-B1", "--output=target,size,used,pcent",
-        "-x", "tmpfs", "-x", "overlay", "-x", "squashfs",
-    ]).stdout
+    output = run(
+        [
+            "df",
+            "-B1",
+            "--output=target,size,used,pcent",
+            "-x",
+            "tmpfs",
+            "-x",
+            "overlay",
+            "-x",
+            "squashfs",
+        ]
+    ).stdout
     rows = []
     for line in output.strip().splitlines()[1:]:  # pula cabeçalho
         parts = line.split()
@@ -112,12 +127,14 @@ def collect_disk_stats() -> list[dict]:
         # tem menos de 1GB.
         if total_bytes < 1_000_000_000:
             continue
-        rows.append({
-            "ponto_montagem": target,
-            "total_bytes": total_bytes,
-            "usado_bytes": int(used),
-            "pct_usado": float(pcent.rstrip("%")),
-        })
+        rows.append(
+            {
+                "ponto_montagem": target,
+                "total_bytes": total_bytes,
+                "usado_bytes": int(used),
+                "pct_usado": float(pcent.rstrip("%")),
+            }
+        )
     return rows
 
 

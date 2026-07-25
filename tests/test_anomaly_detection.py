@@ -5,8 +5,9 @@ Trino/rede — `extract_features` é testado só quanto ao formato da query
 (a leitura em si depende do stack do lakehouse no ar).
 """
 
+from unittest.mock import patch
+
 import pandas as pd
-import pytest
 
 from models import anomaly_detection
 
@@ -104,3 +105,42 @@ class TestFeatureQuery:
         assert "iceberg.gold.dim_credor" in query
         assert "iceberg.gold.dim_modalidade" in query
         assert "iceberg.silver.contratos" in query
+
+
+class TestRunMlflowTracking:
+    """`run()` não deve tocar Trino/MLflow/disco real nos testes — tudo mockado."""
+
+    def _patched_run(self, tmp_path, **run_kwargs):
+        raw = _raw_df(n=10)
+        with (
+            patch.object(anomaly_detection, "extract_features", return_value=raw),
+            patch.object(anomaly_detection, "write_scores") as mock_write,
+            patch.object(anomaly_detection, "configure_mlflow") as mock_configure,
+            patch.object(anomaly_detection, "mlflow") as mock_mlflow,
+            patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+        ):
+            resultado = anomaly_detection.run(**run_kwargs)
+        return resultado, mock_write, mock_configure, mock_mlflow
+
+    def test_configures_mlflow_experiment_and_starts_run(self, tmp_path):
+        _, _, mock_configure, mock_mlflow = self._patched_run(tmp_path)
+
+        mock_configure.assert_called_once_with(anomaly_detection.MLFLOW_EXPERIMENT)
+        mock_mlflow.start_run.assert_called_once()
+
+    def test_logs_params_metrics_and_artifact(self, tmp_path):
+        _, _, _, mock_mlflow = self._patched_run(tmp_path, contamination=0.1)
+
+        params = mock_mlflow.log_params.call_args[0][0]
+        assert params["contamination"] == 0.1
+        metrics = mock_mlflow.log_metrics.call_args[0][0]
+        assert "score_medio" in metrics
+        assert "n_contratos_escorados" in metrics
+        mock_mlflow.set_tag.assert_called_once_with("model_version", anomaly_detection.MODEL_VERSION)
+        mock_mlflow.log_artifact.assert_called_once_with(str(tmp_path / "model.joblib"))
+
+    def test_persist_false_still_logs_but_skips_write_scores(self, tmp_path):
+        _, mock_write, _, mock_mlflow = self._patched_run(tmp_path, persist=False)
+
+        mock_write.assert_not_called()
+        mock_mlflow.log_artifact.assert_called_once()

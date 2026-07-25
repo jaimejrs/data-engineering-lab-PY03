@@ -32,8 +32,7 @@ GOLD_READY_DATASET = Dataset("gold://ready")
 # Jars Iceberg + JDBC Postgres embutidos na imagem do Airflow (docker/airflow),
 # passados ao spark-submit em client mode (driver roda no scheduler).
 SPARK_EXTRA_JARS = (
-    "/opt/spark-extra-jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar,"
-    "/opt/spark-extra-jars/postgresql-42.7.4.jar"
+    "/opt/spark-extra-jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar," "/opt/spark-extra-jars/postgresql-42.7.4.jar"
 )
 
 # Conf comum: em client mode o driver roda no container do scheduler; os

@@ -40,16 +40,14 @@ class TestResourceLimitsInSync:
     def test_mem_limit_matches(self, compose_files, service):
         root, server = compose_files
         assert root[service].get("mem_limit") == server[service].get("mem_limit"), (
-            f"'{service}': mem_limit divergiu entre docker-compose.yml e "
-            f"deploy/server-lakehouse/docker-compose.yml"
+            f"'{service}': mem_limit divergiu entre docker-compose.yml e " f"deploy/server-lakehouse/docker-compose.yml"
         )
 
     @pytest.mark.parametrize("service", SHARED_SERVICES)
     def test_cpus_matches(self, compose_files, service):
         root, server = compose_files
         assert root[service].get("cpus") == server[service].get("cpus"), (
-            f"'{service}': cpus divergiu entre docker-compose.yml e "
-            f"deploy/server-lakehouse/docker-compose.yml"
+            f"'{service}': cpus divergiu entre docker-compose.yml e " f"deploy/server-lakehouse/docker-compose.yml"
         )
 
 

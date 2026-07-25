@@ -1,0 +1,25 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = ["notebooks", "dbt/target", "dbt/logs"]
+
+[tool.ruff.lint]
+# E/F: pyflakes+pycodestyle (erros reais); I: import sorting; UP: sintaxe
+# moderna (ex: `list[int]` em vez de `List[int]`); B: bugbear (armadilhas
+# comuns, ex: mutable default argument).
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E501",  # linha longa — line-length já limita a 120, mas strings/queries
+             # SQL multi-linha e mensagens de erro em português passam disso
+             # legitimamente; não vale quebrar string por causa do linter.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# DAGs do Airflow importam dentro da função de task de propósito (evita
+# puxar `airflow`/`models` pesado no parsing do DAG file) — ruff marca isso
+# como import fora do topo (E402)/não-usado se não olhar o uso; falso positivo
+# recorrente nesse padrão específico.
+"dags/*.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "models", "dags"]

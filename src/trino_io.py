@@ -12,6 +12,7 @@ previsão de modelo.
 
 import logging
 import os
+from typing import Any
 
 import pandas as pd
 import trino
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = int(os.environ.get("TRINO_BULK_INSERT_CHUNK_SIZE", "5000"))
 
 
-def connect(schema: str = "gold"):
+def connect(schema: str = "gold") -> trino.dbapi.Connection:
     return trino.dbapi.connect(
         host=os.environ.get("TRINO_HOST", "trino"),
         port=int(os.environ.get("TRINO_PORT", 8080)),
@@ -38,7 +39,7 @@ def connect(schema: str = "gold"):
     )
 
 
-def query(sql: str, conn=None) -> pd.DataFrame:
+def query(sql: str, conn: trino.dbapi.Connection | None = None) -> pd.DataFrame:
     """Executa um `SELECT` e devolve o resultado como DataFrame."""
     own_conn = conn is None
     conn = conn or connect()
@@ -53,7 +54,7 @@ def query(sql: str, conn=None) -> pd.DataFrame:
             conn.close()
 
 
-def execute(sql: str, conn=None) -> None:
+def execute(sql: str, conn: trino.dbapi.Connection | None = None) -> None:
     """Executa DDL/DML sem resultado tabular (CREATE/DELETE/INSERT)."""
     own_conn = conn is None
     conn = conn or connect()
@@ -66,12 +67,12 @@ def execute(sql: str, conn=None) -> None:
             conn.close()
 
 
-def _sql_literal(value, cast: str | None = None) -> str:
+def _sql_literal(value: Any, cast: str | None = None) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         literal = "NULL"
     elif isinstance(value, bool):
         literal = "true" if value else "false"
-    elif isinstance(value, (int, float)):
+    elif isinstance(value, int | float):
         literal = repr(value)
     else:
         literal = "'" + str(value).replace("'", "''") + "'"
@@ -83,10 +84,10 @@ def _sql_literal(value, cast: str | None = None) -> str:
 def bulk_insert(
     table: str,
     df: pd.DataFrame,
-    columns: list,
-    conn=None,
+    columns: list[str],
+    conn: trino.dbapi.Connection | None = None,
     chunk_size: int | None = None,
-    casts: dict | None = None,
+    casts: dict[str, str] | None = None,
 ) -> None:
     """`INSERT INTO table (...) VALUES (...), (...), ...` em lotes de `chunk_size` linhas.
 
@@ -129,11 +130,11 @@ def bulk_insert(
 def replace_table(
     table: str,
     df: pd.DataFrame,
-    columns: list,
+    columns: list[str],
     ddl: str,
-    conn=None,
+    conn: trino.dbapi.Connection | None = None,
     chunk_size: int | None = None,
-    casts: dict | None = None,
+    casts: dict[str, str] | None = None,
 ) -> None:
     """`CREATE TABLE IF NOT EXISTS` (via `ddl`) + `DELETE FROM` (limpa) + `INSERT` do `df`.
 

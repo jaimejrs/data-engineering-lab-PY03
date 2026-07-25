@@ -47,6 +47,7 @@ def _extract_start(watermark: str) -> str:
         return watermark
     return (base - timedelta(days=LOOKBACK_DAYS)).isoformat()
 
+
 default_args = {
     "owner": "jaime",
     "depends_on_past": False,
@@ -66,7 +67,6 @@ default_args = {
     tags=["bronze", "ingestao", "fase-1"],
 )
 def bronze_extract():
-
     @task
     def extract_postgres():
         ds = get_current_context()["ds"]

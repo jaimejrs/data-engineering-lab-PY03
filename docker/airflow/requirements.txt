@@ -32,3 +32,7 @@ trino==0.328.0
 # API OpenAI (modelo de baixo custo, gpt-4o-mini por padrão) para escrever o
 # relatório narrativo a partir do que os Modelos 1/2 já escoraram.
 openai==1.51.0
+
+# MLflow tracking dos dois modelos (tarefa 29, src/mlflow_utils.py) — backend de
+# arquivo local (sem servidor dedicado no stack), grava em models/artifacts/mlruns/.
+mlflow==2.14.1

@@ -85,9 +85,7 @@ def transform_source(source, run_date):
     files = [path for partition in partitions for path in list_json_files(partition)]
 
     records = [
-        transform_record(source, record)
-        for relative_path in files
-        for record in read_json_records(relative_path)
+        transform_record(source, record) for relative_path in files for record in read_json_records(relative_path)
     ]
     deduped = _dedup(source, records)
 

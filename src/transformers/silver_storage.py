@@ -78,10 +78,7 @@ def find_parquet_files(relative_root: str) -> list:
             if name.endswith(".parquet")
         ]
 
-    return sorted(
-        path[len(base_prefix):] if path.startswith(base_prefix) else path.lstrip("/")
-        for path in paths
-    )
+    return sorted(path[len(base_prefix) :] if path.startswith(base_prefix) else path.lstrip("/") for path in paths)
 
 
 def read_parquet_df(relative_path: str) -> pd.DataFrame:

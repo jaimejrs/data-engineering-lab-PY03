@@ -5,6 +5,8 @@ tocar Trino/rede — as queries (`PAGAMENTO_QUERY`/`CONTRATOS_VIGENCIA_QUERY`) s
 testadas só quanto ao formato.
 """
 
+from unittest.mock import patch
+
 import pandas as pd
 
 from models import payment_forecast as pf
@@ -49,8 +51,12 @@ class TestBuildQuarterlyPanel:
         panel = pf.build_quarterly_panel(_pagamentos_df(), _contratos_df())
         assert len(panel) == 8  # 2 anos x 4 trimestres, 1 órgão
         assert set(panel.columns) >= {
-            "valor_trimestre", "lag_1_trimestre", "lag_4_trimestres", "target_proximo_trimestre",
-            "valor_contratado_ativo", "flag_ano_eleitoral",
+            "valor_trimestre",
+            "lag_1_trimestre",
+            "lag_4_trimestres",
+            "target_proximo_trimestre",
+            "valor_contratado_ativo",
+            "flag_ano_eleitoral",
         }
 
     def test_lag_1_matches_previous_quarter_value(self):
@@ -157,3 +163,43 @@ class TestQueries:
     def test_contratos_query_reads_vigencia_from_silver(self):
         assert "iceberg.gold.fato_contrato" in pf.CONTRATOS_VIGENCIA_QUERY
         assert "iceberg.silver.contratos" in pf.CONTRATOS_VIGENCIA_QUERY
+
+
+class TestRunMlflowTracking:
+    """`run()` não deve tocar Trino/MLflow/disco real nos testes — tudo mockado."""
+
+    def _patched_run(self, tmp_path, **run_kwargs):
+        pagamentos = _pagamentos_df(orgaos=("A", "B"))
+        contratos = _contratos_df(orgaos=("A", "B"))
+        with (
+            patch.object(pf, "extract_pagamento_series", return_value=pagamentos),
+            patch.object(pf, "extract_contratos_vigencia", return_value=contratos),
+            patch.object(pf, "write_forecasts") as mock_write,
+            patch.object(pf, "configure_mlflow") as mock_configure,
+            patch.object(pf, "mlflow") as mock_mlflow,
+            patch.object(pf, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+        ):
+            resultado = pf.run(**run_kwargs)
+        return resultado, mock_write, mock_configure, mock_mlflow
+
+    def test_configures_mlflow_experiment_and_starts_run(self, tmp_path):
+        _, _, mock_configure, mock_mlflow = self._patched_run(tmp_path)
+
+        mock_configure.assert_called_once_with(pf.MLFLOW_EXPERIMENT)
+        mock_mlflow.start_run.assert_called_once()
+
+    def test_logs_params_holdout_metrics_and_artifact(self, tmp_path):
+        _, _, _, mock_mlflow = self._patched_run(tmp_path)
+
+        params = mock_mlflow.log_params.call_args[0][0]
+        assert params["quantiles"] == pf.QUANTILES
+        logged_metric_calls = [c.args[0] for c in mock_mlflow.log_metrics.call_args_list]
+        assert any("mae_mediana" in metrics for metrics in logged_metric_calls)
+        mock_mlflow.set_tag.assert_called_once_with("model_version", pf.MODEL_VERSION)
+        mock_mlflow.log_artifact.assert_called_once_with(str(tmp_path / "model.joblib"))
+
+    def test_persist_false_still_logs_but_skips_write_forecasts(self, tmp_path):
+        _, mock_write, _, mock_mlflow = self._patched_run(tmp_path, persist=False)
+
+        mock_write.assert_not_called()
+        mock_mlflow.log_artifact.assert_called_once()

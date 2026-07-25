@@ -22,6 +22,7 @@ import argparse
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -89,7 +90,7 @@ def extract_top_previsoes(top_n: int = 10) -> pd.DataFrame:
     return trino_io.query(TOP_PREVISOES_QUERY.format(top_n=int(top_n)))
 
 
-def _fmt_reais(valor) -> str:
+def _fmt_reais(valor: Any) -> str:
     try:
         return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except (TypeError, ValueError):
@@ -161,7 +162,9 @@ Estruture o relatório em 4 seções, com um título Markdown para cada:
     return system_prompt, user_prompt
 
 
-def generate_narrative(anomalias: pd.DataFrame, previsoes: pd.DataFrame, client=None, model: str = OPENAI_MODEL) -> str:
+def generate_narrative(
+    anomalias: pd.DataFrame, previsoes: pd.DataFrame, client: OpenAI | None = None, model: str = OPENAI_MODEL
+) -> str:
     """Chama o LLM e devolve o relatório em Markdown. `client` é injetável para
     teste (evita chamada real à API OpenAI nos testes automatizados)."""
     client = client or OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -246,7 +249,7 @@ def run(top_anomalias: int = 10, top_previsoes: int = 10, persist: bool = True) 
     return conteudo
 
 
-def _parse_args():
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Componente de IA Generativa — relatório narrativo (tarefa 25)")
     parser.add_argument("--top-anomalias", type=int, default=10, help="Quantos contratos atípicos incluir no relatório")
     parser.add_argument("--top-previsoes", type=int, default=10, help="Quantas previsões de órgão incluir no relatório")

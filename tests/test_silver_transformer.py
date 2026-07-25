@@ -96,14 +96,19 @@ class TestTransformSource:
             written.append((relative_path, group_records))
             return relative_path
 
-        with patch.object(silver_transformer, "find_data_extracao_dirs",
-                           return_value=["empenhos/ano=2026/mes=06/data_extracao=2026-07-15",
-                                         "empenhos/ano=2026/mes=07/data_extracao=2026-07-15"]), \
-                patch.object(silver_transformer, "list_json_files",
-                             return_value=["chunk_0001.json"]), \
-                patch.object(silver_transformer, "read_json_records",
-                             side_effect=[[records[0]], [records[1]]]), \
-                patch.object(silver_transformer, "write_parquet_records", side_effect=fake_write):
+        with (
+            patch.object(
+                silver_transformer,
+                "find_data_extracao_dirs",
+                return_value=[
+                    "empenhos/ano=2026/mes=06/data_extracao=2026-07-15",
+                    "empenhos/ano=2026/mes=07/data_extracao=2026-07-15",
+                ],
+            ),
+            patch.object(silver_transformer, "list_json_files", return_value=["chunk_0001.json"]),
+            patch.object(silver_transformer, "read_json_records", side_effect=[[records[0]], [records[1]]]),
+            patch.object(silver_transformer, "write_parquet_records", side_effect=fake_write),
+        ):
             result = silver_transformer.transform_source("empenhos", "2026-07-15")
 
         assert result == {
@@ -120,13 +125,18 @@ class TestTransformSource:
         ]
 
     def test_writes_flat_path_for_source_without_partition_field(self):
-        with patch.object(silver_transformer, "find_data_extracao_dirs",
-                           return_value=["unidade_gestora/data_extracao=2026-07-15"]), \
-                patch.object(silver_transformer, "list_json_files",
-                             return_value=["unidade_gestora/data_extracao=2026-07-15/chunk_0001.json"]), \
-                patch.object(silver_transformer, "read_json_records",
-                             return_value=[{"codigo": "1", "ano": 2026}]), \
-                patch.object(silver_transformer, "write_parquet_records") as mock_write:
+        with (
+            patch.object(
+                silver_transformer, "find_data_extracao_dirs", return_value=["unidade_gestora/data_extracao=2026-07-15"]
+            ),
+            patch.object(
+                silver_transformer,
+                "list_json_files",
+                return_value=["unidade_gestora/data_extracao=2026-07-15/chunk_0001.json"],
+            ),
+            patch.object(silver_transformer, "read_json_records", return_value=[{"codigo": "1", "ano": 2026}]),
+            patch.object(silver_transformer, "write_parquet_records") as mock_write,
+        ):
             result = silver_transformer.transform_source("unidade_gestora", "2026-07-15")
 
         mock_write.assert_called_once_with(
@@ -135,12 +145,18 @@ class TestTransformSource:
         assert result["silver_files"] == 1
 
     def test_writes_nothing_when_no_records(self):
-        with patch.object(silver_transformer, "find_data_extracao_dirs",
-                           return_value=["unidade_gestora/data_extracao=2026-07-15"]), \
-                patch.object(silver_transformer, "list_json_files",
-                             return_value=["unidade_gestora/data_extracao=2026-07-15/chunk_0001.json"]), \
-                patch.object(silver_transformer, "read_json_records", return_value=[]), \
-                patch.object(silver_transformer, "write_parquet_records") as mock_write:
+        with (
+            patch.object(
+                silver_transformer, "find_data_extracao_dirs", return_value=["unidade_gestora/data_extracao=2026-07-15"]
+            ),
+            patch.object(
+                silver_transformer,
+                "list_json_files",
+                return_value=["unidade_gestora/data_extracao=2026-07-15/chunk_0001.json"],
+            ),
+            patch.object(silver_transformer, "read_json_records", return_value=[]),
+            patch.object(silver_transformer, "write_parquet_records") as mock_write,
+        ):
             result = silver_transformer.transform_source("unidade_gestora", "2026-07-15")
 
         mock_write.assert_not_called()

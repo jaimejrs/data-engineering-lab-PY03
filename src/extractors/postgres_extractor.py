@@ -112,8 +112,7 @@ def extract_table_chunks(table, data_inicio=None, data_fim=None, engine=None, ch
     try:
         date_column = TABLE_DATE_COLUMNS[table]
         query, params = _build_query(table, date_column, data_inicio, data_fim)
-        for chunk in pd.read_sql(query, engine, params=params, chunksize=chunksize):
-            yield chunk
+        yield from pd.read_sql(query, engine, params=params, chunksize=chunksize)
     finally:
         if owns_engine:
             engine.dispose()
@@ -176,8 +175,7 @@ def extract_and_save(data_inicio=None, data_fim=None, run_date=None, engine=None
 
                     if ano and mes:
                         relative_path = (
-                            f"{table}/ano={ano}/mes={mes}/data_extracao={run_date}/"
-                            f"chunk_{file_index:04d}.json"
+                            f"{table}/ano={ano}/mes={mes}/data_extracao={run_date}/" f"chunk_{file_index:04d}.json"
                         )
                     else:
                         relative_path = f"{table}/data_extracao={run_date}/chunk_{file_index:04d}.json"

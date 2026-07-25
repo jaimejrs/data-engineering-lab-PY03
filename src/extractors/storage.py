@@ -59,11 +59,7 @@ def list_json_files(relative_dir: str) -> list:
 
     if not os.path.isdir(full_dir):
         return []
-    return sorted(
-        f"{relative_dir.strip('/')}/{name}"
-        for name in os.listdir(full_dir)
-        if name.endswith(".json")
-    )
+    return sorted(f"{relative_dir.strip('/')}/{name}" for name in os.listdir(full_dir) if name.endswith(".json"))
 
 
 def find_data_extracao_dirs(relative_root: str, run_date: str) -> list:
@@ -94,12 +90,10 @@ def find_data_extracao_dirs(relative_root: str, run_date: str) -> list:
     else:
         if not os.path.isdir(full_root):
             return []
-        dirpaths = [
-            dirpath.replace(os.sep, "/") for dirpath, _dirs, _files in os.walk(full_root)
-        ]
+        dirpaths = [dirpath.replace(os.sep, "/") for dirpath, _dirs, _files in os.walk(full_root)]
 
     matches = [
-        dirpath[len(base_prefix):] if dirpath.startswith(base_prefix) else dirpath.lstrip("/")
+        dirpath[len(base_prefix) :] if dirpath.startswith(base_prefix) else dirpath.lstrip("/")
         for dirpath in dirpaths
         if dirpath.rstrip("/").rsplit("/", 1)[-1] == target_name
     ]
@@ -115,5 +109,5 @@ def read_json_records(relative_path: str) -> list:
         with client.read(full_path, encoding="utf-8") as reader:
             return json.load(reader)
 
-    with open(full_path, "r", encoding="utf-8") as fh:
+    with open(full_path, encoding="utf-8") as fh:
         return json.load(fh)

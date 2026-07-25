@@ -54,19 +54,31 @@ class TestExtractAndSave:
     def test_writes_each_page_and_returns_counts(self):
         session = MagicMock()
         session.get.side_effect = [
-            _fake_response({"summary": {"total_pages": 2}, "data": [
-                {"id": 1, "data_assinatura": "2026-01-05T00:00:00.000-03:00"},
-                {"id": 2, "data_assinatura": "2026-03-10T00:00:00.000-03:00"},
-            ]}),
-            _fake_response({"summary": {"total_pages": 2}, "data": [
-                {"id": 3, "data_assinatura": "2026-02-01T00:00:00.000-03:00"},
-            ]}),
+            _fake_response(
+                {
+                    "summary": {"total_pages": 2},
+                    "data": [
+                        {"id": 1, "data_assinatura": "2026-01-05T00:00:00.000-03:00"},
+                        {"id": 2, "data_assinatura": "2026-03-10T00:00:00.000-03:00"},
+                    ],
+                }
+            ),
+            _fake_response(
+                {
+                    "summary": {"total_pages": 2},
+                    "data": [
+                        {"id": 3, "data_assinatura": "2026-02-01T00:00:00.000-03:00"},
+                    ],
+                }
+            ),
         ]
 
-        with patch.object(api_extractor, "write_json_records") as mock_write, \
-                patch.object(api_extractor, "fetch_contratos", wraps=api_extractor.fetch_contratos) as _, \
-                patch("requests.Session", return_value=session), \
-                patch.object(api_extractor.time, "sleep"):
+        with (
+            patch.object(api_extractor, "write_json_records") as mock_write,
+            patch.object(api_extractor, "fetch_contratos", wraps=api_extractor.fetch_contratos) as _,
+            patch("requests.Session", return_value=session),
+            patch.object(api_extractor.time, "sleep"),
+        ):
             result = api_extractor.extract_and_save(run_date="2026-07-15")
 
         assert result == {
@@ -93,9 +105,7 @@ class TestBuildQuery:
         assert params == {}
 
     def test_filters_applied_when_date_column_present(self):
-        query, params = postgres_extractor._build_query(
-            "empenhos", "data_empenho", "2026-01-01", "2026-01-31"
-        )
+        query, params = postgres_extractor._build_query("empenhos", "data_empenho", "2026-01-01", "2026-01-31")
         assert "WHERE" in str(query)
         assert "data_empenho >= :data_inicio" in str(query)
         assert "data_empenho <= :data_fim" in str(query)
@@ -140,9 +150,11 @@ class TestExtractAndSaveChunked:
             "unidade_gestora": [pd.DataFrame({"id": [100, 101]})],
         }
 
-        with patch.object(postgres_extractor, "write_json_records") as mock_write, \
-                patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)), \
-                patch.object(postgres_extractor, "create_engine", return_value=MagicMock()):
+        with (
+            patch.object(postgres_extractor, "write_json_records") as mock_write,
+            patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)),
+            patch.object(postgres_extractor, "create_engine", return_value=MagicMock()),
+        ):
             result = postgres_extractor.extract_and_save(run_date="2026-07-15")
 
         assert result["counts"] == {
@@ -157,21 +169,27 @@ class TestExtractAndSaveChunked:
 
     def test_partitions_by_ano_mes_from_date_column(self):
         chunks_by_table = {
-            "empenhos": [pd.DataFrame({
-                "id": [1, 2, 3],
-                "dataemissao": [
-                    "2022-01-10 00:00:00.000",
-                    "2022-01-20 00:00:00.000",
-                    "2022-02-05 00:00:00.000",
-                ],
-            })],
+            "empenhos": [
+                pd.DataFrame(
+                    {
+                        "id": [1, 2, 3],
+                        "dataemissao": [
+                            "2022-01-10 00:00:00.000",
+                            "2022-01-20 00:00:00.000",
+                            "2022-02-05 00:00:00.000",
+                        ],
+                    }
+                )
+            ],
             "ordem_bancaria_orcamentaria": [pd.DataFrame({"id": [], "dataemissao": []})],
             "unidade_gestora": [pd.DataFrame({"id": [100]})],
         }
 
-        with patch.object(postgres_extractor, "write_json_records") as mock_write, \
-                patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)), \
-                patch.object(postgres_extractor, "create_engine", return_value=MagicMock()):
+        with (
+            patch.object(postgres_extractor, "write_json_records") as mock_write,
+            patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)),
+            patch.object(postgres_extractor, "create_engine", return_value=MagicMock()),
+        ):
             result = postgres_extractor.extract_and_save(run_date="2026-07-15")
 
         assert result["counts"]["empenhos"] == 3
@@ -191,9 +209,11 @@ class TestExtractAndSaveChunked:
             "unidade_gestora": [],
         }
 
-        with patch.object(postgres_extractor, "write_json_records") as mock_write, \
-                patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)), \
-                patch.object(postgres_extractor, "create_engine", return_value=MagicMock()):
+        with (
+            patch.object(postgres_extractor, "write_json_records") as mock_write,
+            patch.object(postgres_extractor.pd, "read_sql", side_effect=self._fake_read_sql(chunks_by_table)),
+            patch.object(postgres_extractor, "create_engine", return_value=MagicMock()),
+        ):
             result = postgres_extractor.extract_and_save(run_date="2026-07-15")
 
         assert result["counts"] == {"empenhos": 0, "ordem_bancaria_orcamentaria": 0, "unidade_gestora": 0}

@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from models import narrative_report as nr
 
@@ -136,11 +135,13 @@ class TestQueries:
 
 class TestRun:
     def test_run_orchestrates_extract_generate_save_persist(self, tmp_path):
-        with patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()) as mock_anomalias, \
-                patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()) as mock_previsoes, \
-                patch.object(nr, "generate_narrative", return_value="# Relatório\nOK.") as mock_generate, \
-                patch.object(nr, "REPORT_DIR", str(tmp_path)), \
-                patch.object(nr, "write_report_metadata") as mock_write:
+        with (
+            patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()) as mock_anomalias,
+            patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()) as mock_previsoes,
+            patch.object(nr, "generate_narrative", return_value="# Relatório\nOK.") as mock_generate,
+            patch.object(nr, "REPORT_DIR", str(tmp_path)),
+            patch.object(nr, "write_report_metadata") as mock_write,
+        ):
             resultado = nr.run(top_anomalias=5, top_previsoes=5)
 
         mock_anomalias.assert_called_once_with(5)
@@ -150,11 +151,13 @@ class TestRun:
         assert resultado == "# Relatório\nOK."
 
     def test_run_skips_persist_when_disabled(self, tmp_path):
-        with patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()), \
-                patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()), \
-                patch.object(nr, "generate_narrative", return_value="# Relatório"), \
-                patch.object(nr, "REPORT_DIR", str(tmp_path)), \
-                patch.object(nr, "write_report_metadata") as mock_write:
+        with (
+            patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()),
+            patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()),
+            patch.object(nr, "generate_narrative", return_value="# Relatório"),
+            patch.object(nr, "REPORT_DIR", str(tmp_path)),
+            patch.object(nr, "write_report_metadata") as mock_write,
+        ):
             nr.run(persist=False)
 
         mock_write.assert_not_called()

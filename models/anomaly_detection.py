@@ -27,6 +27,7 @@ import logging
 import os
 
 import joblib
+import mlflow
 import pandas as pd
 import trino
 from dotenv import load_dotenv
@@ -34,6 +35,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import MinMaxScaler
 
 from src import trino_io
+from src.mlflow_utils import configure_mlflow
 
 load_dotenv()
 
@@ -43,6 +45,8 @@ ARTIFACT_PATH = os.environ.get(
     "ANOMALY_MODEL_PATH",
     os.path.join(os.path.dirname(__file__), "artifacts", "isolation_forest_contratos.joblib"),
 )
+
+MLFLOW_EXPERIMENT = "anomaly_detection"
 
 # Tabela Gold própria do score — não é gravada em `fato_contrato` diretamente:
 # `fato_contrato` é `materialized='table'` no dbt (recriada do zero a cada
@@ -75,7 +79,7 @@ WHERE f.valor_contrato IS NOT NULL
 """
 
 
-def connect():
+def connect() -> trino.dbapi.Connection:
     return trino.dbapi.connect(
         host=os.environ.get("TRINO_HOST", "trino"),
         port=int(os.environ.get("TRINO_PORT", 8080)),
@@ -86,7 +90,7 @@ def connect():
     )
 
 
-def extract_features(conn=None) -> pd.DataFrame:
+def extract_features(conn: trino.dbapi.Connection | None = None) -> pd.DataFrame:
     """Lê a Gold (fato_contrato + dimensões) e a Silver (tipo_objeto/vigência) via Trino."""
     own_conn = conn is None
     conn = conn or connect()
@@ -129,7 +133,7 @@ def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def train_model(X: pd.DataFrame, contamination="auto", random_state=42) -> IsolationForest:
+def train_model(X: pd.DataFrame, contamination: float | str = "auto", random_state: int = 42) -> IsolationForest:
     model = IsolationForest(contamination=contamination, random_state=random_state, n_estimators=200)
     model.fit(X)
     return model
@@ -143,13 +147,13 @@ def score_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
     return pd.Series(scaled, index=X.index, name="score_anomalia")
 
 
-def save_model(model: IsolationForest, feature_columns: list, path: str = ARTIFACT_PATH) -> None:
+def save_model(model: IsolationForest, feature_columns: list[str], path: str = ARTIFACT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     joblib.dump({"model": model, "feature_columns": feature_columns}, path)
     logger.info("Modelo salvo em %s", path)
 
 
-def load_model(path: str = ARTIFACT_PATH):
+def load_model(path: str = ARTIFACT_PATH) -> tuple[IsolationForest, list[str]]:
     bundle = joblib.load(path)
     return bundle["model"], bundle["feature_columns"]
 
@@ -182,29 +186,56 @@ def write_scores(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) ->
     logger.info("Gravados %s scores em %s", len(payload), SCORE_TABLE)
 
 
-def run(contamination="auto", persist: bool = True) -> pd.DataFrame:
+def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFrame:
     """Extrai features da Gold/Silver, treina, escora e (por padrão) grava o
-    resultado em `SCORE_TABLE` para `fato_contrato` pegar no próximo `dbt build`."""
-    raw = extract_features()
-    X = build_feature_matrix(raw)
-    model = train_model(X, contamination=contamination)
-    scores = score_anomalia(model, X)
-    save_model(model, list(X.columns))
+    resultado em `SCORE_TABLE` para `fato_contrato` pegar no próximo `dbt build`.
 
-    resultado = raw[["id_contrato_origem", "ano"]].copy()
-    resultado["score_anomalia"] = scores.values
-    logger.info(
-        "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f",
-        len(resultado),
-        resultado["score_anomalia"].mean(),
-        resultado["score_anomalia"].max(),
-    )
-    if persist:
-        write_scores(resultado)
+    Cada chamada é uma run do MLflow (tarefa 29) — params do treino, métricas
+    do score e o `.joblib` do modelo como artefato, pro time comparar execuções
+    ao longo do tempo (ex: se o score médio mudar muito de um dia pro outro).
+    """
+    configure_mlflow(MLFLOW_EXPERIMENT)
+    with mlflow.start_run(run_name=f"{MODEL_VERSION}_{pd.Timestamp.utcnow():%Y%m%d_%H%M%S}"):
+        raw = extract_features()
+        X = build_feature_matrix(raw)
+
+        mlflow.log_params(
+            {
+                "contamination": contamination,
+                "n_estimators": 200,
+                "random_state": 42,
+                "n_contratos_entrada": len(raw),
+                "n_features": X.shape[1],
+            }
+        )
+        mlflow.set_tag("model_version", MODEL_VERSION)
+
+        model = train_model(X, contamination=contamination)
+        scores = score_anomalia(model, X)
+        save_model(model, list(X.columns))
+
+        resultado = raw[["id_contrato_origem", "ano"]].copy()
+        resultado["score_anomalia"] = scores.values
+        mlflow.log_metrics(
+            {
+                "score_medio": float(resultado["score_anomalia"].mean()),
+                "score_maximo": float(resultado["score_anomalia"].max()),
+                "n_contratos_escorados": float(len(resultado)),
+            }
+        )
+        logger.info(
+            "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f",
+            len(resultado),
+            resultado["score_anomalia"].mean(),
+            resultado["score_anomalia"].max(),
+        )
+        if persist:
+            write_scores(resultado)
+        mlflow.log_artifact(ARTIFACT_PATH)
     return resultado
 
 
-def _parse_args():
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Modelo 1 — detecção de anomalias em contratos")
     parser.add_argument(
         "--contamination",

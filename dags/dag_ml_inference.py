@@ -72,7 +72,6 @@ default_args = {
     tags=["ml", "anomalia", "previsao", "ia-generativa", "fase-3"],
 )
 def ml_inference():
-
     @task
     def score_anomalias():
         from models.anomaly_detection import run

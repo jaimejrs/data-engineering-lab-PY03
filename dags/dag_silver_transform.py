@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 
 from airflow.decorators import dag
 from airflow.providers.docker.operators.docker import DockerOperator
+
 from docker.types import Mount
 
 # Garante `dags`/`src` importáveis sob o parsing isolado do Airflow.
@@ -78,9 +79,11 @@ def silver_transform():
         # Runtime Spark da imagem; local[*] (sem cluster) -> sem rede de executores.
         entrypoint=["/opt/spark/bin/spark-submit"],
         command=[
-            "--driver-memory", "4g",
+            "--driver-memory",
+            "4g",
             "/opt/datalab/src/spark_jobs/silver_job.py",
-            "--run-date", RUN_DATE_TEMPLATE,
+            "--run-date",
+            RUN_DATE_TEMPLATE,
         ],
         environment=SPARK_JOB_ENV,
         mounts=[Mount(source=LAKEHOUSE_SRC_DIR, target="/opt/datalab/src", type="bind", read_only=True)],

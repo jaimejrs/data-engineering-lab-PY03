@@ -7,6 +7,21 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: ruff (lint + format check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instala ruff
+        run: pip install ruff==0.6.9
+      - name: ruff check (lint)
+        run: ruff check .
+      - name: ruff format --check (formatação)
+        run: ruff format --check .
+
   tests:
     name: pytest + compile jobs Spark
     runs-on: ubuntu-latest
@@ -19,7 +34,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest \
-            scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2 openai==1.51.0
+            scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2 openai==1.51.0 mlflow==2.14.1
       - name: pytest (regras/normalização/extractors)
         run: pytest -q
       - name: Compila os jobs PySpark (sintaxe; pyspark não instalado)

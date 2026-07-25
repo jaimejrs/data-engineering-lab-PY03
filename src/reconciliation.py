@@ -30,7 +30,7 @@ DDL = f"""
 """
 
 
-def record_bronze_counts(run_date: str, counts_by_source: dict) -> None:
+def record_bronze_counts(run_date: str, counts_by_source: dict[str, int]) -> None:
     """Grava/atualiza a contagem de Bronze por fonte para `run_date`.
 
     `counts_by_source`: `{fonte: registros}` — ex: o resultado de

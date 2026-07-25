@@ -113,7 +113,11 @@ def normalize(df, source: str):
             df = df.withColumn(field, F.substring(F.col(field), 1, 10))
 
     if source == "contratos":
-        plain = _non_empty(F.col("plain_cpf_cnpj_financiador")) if "plain_cpf_cnpj_financiador" in df.columns else F.lit(None)
+        plain = (
+            _non_empty(F.col("plain_cpf_cnpj_financiador"))
+            if "plain_cpf_cnpj_financiador" in df.columns
+            else F.lit(None)
+        )
         masked = _non_empty(F.col("cpf_cnpj_financiador")) if "cpf_cnpj_financiador" in df.columns else F.lit(None)
         digits = F.regexp_replace(F.coalesce(plain, masked, F.lit("")), r"[^0-9]", "")
         df = df.withColumn("cnpj_cpf_normalizado", digits)
@@ -155,12 +159,7 @@ def write_source(spark, source: str, df) -> None:
     keys = list(DEDUP_KEYS[source])
 
     if not spark.catalog.tableExists(fqn):
-        (
-            df.writeTo(fqn)
-            .using("iceberg")
-            .partitionedBy(*[F.col(c) for c in part_cols])
-            .create()
-        )
+        (df.writeTo(fqn).using("iceberg").partitionedBy(*[F.col(c) for c in part_cols]).create())
         logger.info("Tabela Iceberg criada: %s", fqn)
         return
 

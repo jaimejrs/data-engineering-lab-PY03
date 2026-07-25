@@ -75,13 +75,15 @@ def _request_page(session, page, data_assinatura_inicio, data_assinatura_fim):
             wait = SLEEP_BETWEEN_PAGES * attempt
             logger.warning(
                 "Falha na página %s (tentativa %s/%s): %s. Aguardando %.1fs",
-                page, attempt, MAX_RETRIES, exc, wait,
+                page,
+                attempt,
+                MAX_RETRIES,
+                exc,
+                wait,
             )
             time.sleep(wait)
 
-    raise CearaTransparenteAPIError(
-        f"Falha ao obter página {page} após {MAX_RETRIES} tentativas"
-    ) from last_error
+    raise CearaTransparenteAPIError(f"Falha ao obter página {page} após {MAX_RETRIES} tentativas") from last_error
 
 
 def fetch_contratos(data_assinatura_inicio=None, data_assinatura_fim=None, session=None):
@@ -175,9 +177,7 @@ def extract_and_save(data_assinatura_inicio=None, data_assinatura_fim=None, run_
             file_index = partition_counters[key]
 
             if ano and mes:
-                relative_path = (
-                    f"contratos/ano={ano}/mes={mes}/data_extracao={run_date}/page_{file_index:04d}.json"
-                )
+                relative_path = f"contratos/ano={ano}/mes={mes}/data_extracao={run_date}/page_{file_index:04d}.json"
             else:
                 relative_path = f"contratos/data_extracao={run_date}/page_{file_index:04d}.json"
 

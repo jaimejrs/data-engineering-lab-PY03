@@ -29,10 +29,12 @@ import logging
 import os
 
 import joblib
+import mlflow
 import pandas as pd
 from xgboost import XGBRegressor
 
 from src import trino_io
+from src.mlflow_utils import configure_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ ARTIFACT_PATH = os.environ.get(
 
 FORECAST_TABLE = "iceberg.gold.previsao_pagamento_orgao"
 MODEL_VERSION = "xgboost_quantile_v2_ob"
+MLFLOW_EXPERIMENT = "payment_forecast"
 
 TOP_MODALIDADES = 8
 QUANTILES = (0.1, 0.5, 0.9)  # intervalo de confiança ~80% + mediana
@@ -85,13 +88,13 @@ def extract_contratos_vigencia() -> pd.DataFrame:
     return trino_io.query(CONTRATOS_VIGENCIA_QUERY)
 
 
-def _quarter_bounds(ano: int, trimestre: int):
+def _quarter_bounds(ano: int, trimestre: int) -> tuple[pd.Timestamp, pd.Timestamp]:
     inicio = pd.Timestamp(f"{ano}-{_QUARTER_MONTH_START[trimestre]}")
     fim = pd.Timestamp(f"{ano}-{_QUARTER_MONTH_END[trimestre]}")
     return inicio, fim
 
 
-def _next_quarter(ano: int, trimestre: int):
+def _next_quarter(ano: int, trimestre: int) -> tuple[int, int]:
     return (ano + 1, 1) if trimestre == 4 else (ano, trimestre + 1)
 
 
@@ -148,7 +151,9 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     panel = base.merge(modalidade_dominante, on=["sk_orgao", "ano", "trimestre"], how="left")
 
     panel = panel.sort_values(["sk_orgao", "ano", "trimestre"]).reset_index(drop=True)
-    panel["valor_contratado_ativo"] = _valor_contratado_ativo_por_org(contratos, panel[["sk_orgao", "ano", "trimestre"]])
+    panel["valor_contratado_ativo"] = _valor_contratado_ativo_por_org(
+        contratos, panel[["sk_orgao", "ano", "trimestre"]]
+    )
     panel["flag_ano_eleitoral"] = (panel["ano"] % 2 == 0).astype(int)
 
     grouped = panel.groupby("sk_orgao")["valor_trimestre"]
@@ -175,10 +180,10 @@ def build_feature_matrix(panel: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def train_models(X: pd.DataFrame, y: pd.Series, quantiles=QUANTILES) -> dict:
+def train_models(X: pd.DataFrame, y: pd.Series, quantiles: tuple[float, ...] = QUANTILES) -> dict[float, XGBRegressor]:
     """Um `XGBRegressor` por quantil (`reg:quantileerror`) — dá a mediana (p50)
     como previsão central e p10/p90 como intervalo de confiança ~80%."""
-    models = {}
+    models: dict[float, XGBRegressor] = {}
     for q in quantiles:
         model = XGBRegressor(
             objective="reg:quantileerror",
@@ -193,7 +198,7 @@ def train_models(X: pd.DataFrame, y: pd.Series, quantiles=QUANTILES) -> dict:
     return models
 
 
-def predict_quantiles(models: dict, X: pd.DataFrame) -> pd.DataFrame:
+def predict_quantiles(models: dict[float, XGBRegressor], X: pd.DataFrame) -> pd.DataFrame:
     preds = {f"p{int(q * 100)}": models[q].predict(X) for q in models}
     out = pd.DataFrame(preds, index=X.index)
     # Garante monotonicidade (p10 <= p50 <= p90) mesmo se os modelos discordarem
@@ -203,7 +208,7 @@ def predict_quantiles(models: dict, X: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict:
+def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict[str, float]:
     """Holdout temporal: o último trimestre com alvo conhecido vira teste; o
     resto treina. Métrica: MAE da mediana + cobertura do intervalo [p10, p90]
     (deveria rondar 80% se os quantis estiverem bem calibrados)."""
@@ -232,7 +237,7 @@ def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict:
     return metrics
 
 
-def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict) -> pd.DataFrame:
+def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict[float, XGBRegressor]) -> pd.DataFrame:
     """Previsão real: linhas cujo alvo é desconhecido (o trimestre mais recente
     de cada órgão) — é para elas que ainda não existe dado real do próximo
     trimestre."""
@@ -249,13 +254,13 @@ def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict) ->
     return resultado.reset_index(drop=True)
 
 
-def save_model(models: dict, feature_columns: list, path: str = ARTIFACT_PATH) -> None:
+def save_model(models: dict[float, XGBRegressor], feature_columns: list[str], path: str = ARTIFACT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     joblib.dump({"models": models, "feature_columns": feature_columns}, path)
     logger.info("Modelo salvo em %s", path)
 
 
-def load_model(path: str = ARTIFACT_PATH):
+def load_model(path: str = ARTIFACT_PATH) -> tuple[dict[float, XGBRegressor], list[str]]:
     bundle = joblib.load(path)
     return bundle["models"], bundle["feature_columns"]
 
@@ -298,30 +303,55 @@ def write_forecasts(resultado: pd.DataFrame, model_version: str = MODEL_VERSION)
 
 
 def run(persist: bool = True) -> pd.DataFrame:
-    pagamentos = extract_pagamento_series()
-    contratos = extract_contratos_vigencia()
-    panel = build_quarterly_panel(pagamentos, contratos)
-    X = build_feature_matrix(panel)
-    y = panel.loc[X.index, "target_proximo_trimestre"]
+    """Monta o painel, treina os 3 regressores por quantil e prevê o próximo
+    trimestre por órgão (por padrão, grava em `FORECAST_TABLE`).
 
-    metrics = evaluate(panel, X)  # holdout = último trimestre com alvo conhecido
+    Cada chamada é uma run do MLflow (tarefa 29) — params dos quantis/hiper-
+    parâmetros, métricas de holdout (MAE, cobertura do intervalo) e o `.joblib`
+    dos 3 modelos como artefato.
+    """
+    configure_mlflow(MLFLOW_EXPERIMENT)
+    with mlflow.start_run(run_name=f"{MODEL_VERSION}_{pd.Timestamp.utcnow():%Y%m%d_%H%M%S}"):
+        pagamentos = extract_pagamento_series()
+        contratos = extract_contratos_vigencia()
+        panel = build_quarterly_panel(pagamentos, contratos)
+        X = build_feature_matrix(panel)
+        y = panel.loc[X.index, "target_proximo_trimestre"]
 
-    train_idx = X.index[y.notna()]
-    models = train_models(X.loc[train_idx], y.loc[train_idx])
-    save_model(models, list(X.columns))
+        mlflow.log_params(
+            {
+                "quantiles": QUANTILES,
+                "n_estimators": 200,
+                "max_depth": 4,
+                "learning_rate": 0.05,
+                "n_orgaos_trimestres": len(X),
+                "n_features": X.shape[1],
+            }
+        )
+        mlflow.set_tag("model_version", MODEL_VERSION)
 
-    resultado = forecast_next_quarter(panel, X, models)
-    logger.info(
-        "Previsão concluída: %s órgãos, mae_mediana(holdout)=%s",
-        len(resultado),
-        metrics.get("mae_mediana"),
-    )
-    if persist:
-        write_forecasts(resultado)
+        metrics = evaluate(panel, X)  # holdout = último trimestre com alvo conhecido
+        if metrics:
+            mlflow.log_metrics(metrics)
+
+        train_idx = X.index[y.notna()]
+        models = train_models(X.loc[train_idx], y.loc[train_idx])
+        save_model(models, list(X.columns))
+
+        resultado = forecast_next_quarter(panel, X, models)
+        mlflow.log_metric("n_orgaos_previstos", float(len(resultado)))
+        logger.info(
+            "Previsão concluída: %s órgãos, mae_mediana(holdout)=%s",
+            len(resultado),
+            metrics.get("mae_mediana"),
+        )
+        if persist:
+            write_forecasts(resultado)
+        mlflow.log_artifact(ARTIFACT_PATH)
     return resultado
 
 
-def _parse_args():
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Modelo 2 — previsão trimestral de pagamentos por órgão")
     return parser.parse_args()
 

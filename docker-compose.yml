@@ -8,9 +8,12 @@ services:
     image: postgres:15
     container_name: datalab_postgres
     environment:
-      POSTGRES_USER: dlab
-      POSTGRES_PASSWORD: d123
-      POSTGRES_DB: datalab
+      # Defaults só valem para o stack local/descartável (`docker compose up`
+      # sem configurar nada); em qualquer deploy real, sobrescreva via .env
+      # (nunca commitado) — mesmo padrão de OPENAI_API_KEY.
+      POSTGRES_USER: ${POSTGRES_USER:-dlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-d123}
+      POSTGRES_DB: ${POSTGRES_DB:-datalab}
     ports:
       - "5432:5432"
     volumes:
@@ -20,7 +23,7 @@ services:
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dlab -d datalab"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dlab} -d ${POSTGRES_DB:-datalab}"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -63,7 +66,7 @@ services:
         condition: service_healthy
     environment: &airflow-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://dlab:d123@postgres:5432/datalab
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-dlab}:${POSTGRES_PASSWORD:-d123}@postgres:5432/${POSTGRES_DB:-datalab}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       SOURCE_POSTGRES_URL: ${SOURCE_POSTGRES_URL:-postgresql://usuario:senha@host:5432/ceara_transparente}
       BRONZE_STORAGE_BACKEND: hdfs
@@ -87,7 +90,7 @@ services:
     entrypoint: /bin/bash
     command:
       - -c
-      - "airflow db migrate && airflow users create --username admin --password admin --firstname Data --lastname Admin --role Admin --email admin@datalab.com || true"
+      - "airflow db migrate && airflow users create --username ${AIRFLOW_ADMIN_USER:-admin} --password ${AIRFLOW_ADMIN_PASSWORD:-admin} --firstname Data --lastname Admin --role Admin --email admin@datalab.com || true"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
@@ -151,7 +154,7 @@ services:
     ports:
       - "8888:8888"
     environment:
-      - JUPYTER_TOKEN=datalab
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-datalab}
       - SOURCE_POSTGRES_URL=${SOURCE_POSTGRES_URL:-postgresql://usuario:senha@host:5432/ceara_transparente}
       - BRONZE_STORAGE_BACKEND=hdfs
       - BRONZE_BASE_PATH=/bronze

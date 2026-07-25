@@ -12,6 +12,7 @@ Implementação inicial de apoio à DAG 1 (Membro 1) — a cargo do Membro 4
 import logging
 import os
 import random
+from typing import Any
 
 from src.extractors.storage import find_data_extracao_dirs, list_json_files, read_json_records
 
@@ -56,7 +57,7 @@ class BronzeValidationError(RuntimeError):
     """Falha de validação de schema ou completude na camada Bronze."""
 
 
-def _records_to_check(records, sample_size):
+def _records_to_check(records: list[dict[str, Any]], sample_size: int) -> list[dict[str, Any]]:
     """Amostra de `records` para a checagem de schema/completude.
 
     `sample_size` de 0 (ou >= len(records)) preserva o comportamento original —
@@ -77,7 +78,13 @@ def _records_to_check(records, sample_size):
     return head + middle + tail
 
 
-def validate_source(source, run_date, required_columns=None, min_records=0, sample_size=None):
+def validate_source(
+    source: str,
+    run_date: str,
+    required_columns: set[str] | None = None,
+    min_records: int = 0,
+    sample_size: int | None = None,
+) -> dict[str, Any]:
     """Valida os arquivos de uma fonte para uma `data_extracao` específica.
 
     Busca recursivamente por `data_extracao={run_date}` sob a raiz da fonte —
@@ -104,8 +111,7 @@ def validate_source(source, run_date, required_columns=None, min_records=0, samp
     files = [path for partition in partitions for path in list_json_files(partition)]
     if not files:
         raise BronzeValidationError(
-            f"'{source}': nenhum arquivo encontrado para data_extracao={run_date} "
-            f"(busca recursiva sob '{source}/')"
+            f"'{source}': nenhum arquivo encontrado para data_extracao={run_date} " f"(busca recursiva sob '{source}/')"
         )
 
     total_records = 0
@@ -121,7 +127,8 @@ def validate_source(source, run_date, required_columns=None, min_records=0, samp
             # tão quebrada quanto coluna ausente — ex: dataemissao="" travaria o
             # particionamento ano=/mes= silenciosamente lá na frente.
             blank = {
-                column for column in required_columns
+                column
+                for column in required_columns
                 if record[column] is None or (isinstance(record[column], str) and not record[column].strip())
             }
             if blank:
@@ -137,13 +144,16 @@ def validate_source(source, run_date, required_columns=None, min_records=0, samp
 
     logger.info(
         "Bronze validada [%s]: %s partição(ões), %s arquivo(s), %s registro(s)%s",
-        source, len(partitions), len(files), total_records,
+        source,
+        len(partitions),
+        len(files),
+        total_records,
         f" (schema checado por amostra de até {sample_size}/arquivo)" if sample_size else "",
     )
     return {"source": source, "partitions": len(partitions), "files": len(files), "records": total_records}
 
 
-def validate_bronze(run_date, min_records_by_source=None):
+def validate_bronze(run_date: str, min_records_by_source: dict[str, int] | None = None) -> dict[str, Any]:
     """Valida todas as fontes da Bronze (empenhos, OB, unidade_gestora, contratos) para `run_date`.
 
     Sem `min_records_by_source` explícito, usa `DEFAULT_MIN_RECORDS_BY_SOURCE`

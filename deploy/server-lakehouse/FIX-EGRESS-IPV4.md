@@ -74,6 +74,12 @@ docker exec datalab_airflow_scheduler getent hosts api-dados-abertos.cearatransp
 docker exec datalab_airflow_scheduler airflow tasks test bronze_extract extract_api 2026-07-23
 ```
 
+> **Nota (25/07/2026):** `tasks test` aqui é de baixo risco (escreve JSON
+> particionado por página no HDFS, uma reexecução só sobrescreve os mesmos
+> arquivos) — mas para tasks que escrevem via Trino, `tasks test` sobre SSH
+> não é seguro (processo pode sobreviver a um timeout do cliente e virar
+> escritor concorrente). Ver `docs/02-rotina-manutencao.md`.
+
 ## 6. Rollback (se algo der errado em qualquer passo)
 
 ```bash

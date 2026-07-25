@@ -39,6 +39,7 @@ os.environ.setdefault(
 )
 
 from pyspark.sql import Row  # noqa: E402
+from pyspark.sql import functions as F  # noqa: E402
 
 from src.spark_jobs import silver_job, spark_session  # noqa: E402
 
@@ -122,11 +123,11 @@ class TestMergeIdempotency:
             [Row(codigo="1", ano=2026, titulo="ORGAO A"), Row(codigo="2", ano=2026, titulo="ORGAO B")]
         )
 
-        silver_job.write_source(spark, source, df)
+        silver_job.write_source(spark, source, df, "2026-07-20")
         primeira_carga = spark.table(fqn).count()
 
-        # Reprocessa o MESMO lote (mesma data_extracao, cenário real de retry/backfill sobreposto).
-        silver_job.write_source(spark, source, df)
+        # Reprocessa o MESMO lote, MESMA data_extracao (cenário real de retry/backfill sobreposto).
+        silver_job.write_source(spark, source, df, "2026-07-20")
         segunda_carga = spark.table(fqn).count()
 
         assert primeira_carga == 2
@@ -140,11 +141,61 @@ class TestMergeIdempotency:
         spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {spark_session.CATALOG}.{spark_session.NAMESPACE}")
 
         v1 = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME ANTIGO")])
-        silver_job.write_source(spark, source, v1)
+        silver_job.write_source(spark, source, v1, "2026-07-10")
 
         v2 = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME NOVO")])
-        silver_job.write_source(spark, source, v2)
+        silver_job.write_source(spark, source, v2, "2026-07-20")
 
         rows = spark.table(fqn).collect()
         assert len(rows) == 1
         assert rows[0]["titulo"] == "NOME NOVO"
+
+    def test_reprocessing_older_data_extracao_does_not_overwrite_newer_row(self, spark):
+        """Item 2 de docs/06-analise-critica.md: o gap que o `_data_extracao`
+        + guarda no MERGE resolve. Sem a guarda, este teste falharia (o
+        reprocessamento do lote antigo, rodado por último, sobrescreveria o
+        nome já atualizado pelo lote mais novo)."""
+        source = "unidade_gestora"
+        fqn = spark_session.table_fqn(source)
+        if spark.catalog.tableExists(fqn):
+            spark.sql(f"DROP TABLE {fqn}")
+        spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {spark_session.CATALOG}.{spark_session.NAMESPACE}")
+
+        antigo = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME ANTIGO")])
+        novo = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME NOVO")])
+
+        # Ordem cronológica normal: processa a data_extracao mais nova primeiro...
+        silver_job.write_source(spark, source, novo, "2026-07-20")
+        # ...depois um backfill/retry reprocessa uma data_extracao MAIS ANTIGA
+        # (cenário real: reprocessamento fora de ordem, lookback sobreposto, etc.)
+        silver_job.write_source(spark, source, antigo, "2026-07-10")
+
+        rows = spark.table(fqn).collect()
+        assert len(rows) == 1
+        assert rows[0]["titulo"] == "NOME NOVO"  # não foi sobrescrito pelo lote antigo
+        assert str(rows[0]["_data_extracao"]) == "2026-07-20"  # marcador não regrediu
+
+    def test_legacy_row_without_data_extracao_marker_is_still_updated(self, spark):
+        """Linhas gravadas antes desta coluna existir (`_data_extracao` NULL
+        após a evolução de schema) precisam continuar aceitando UPDATE
+        normalmente — não podemos travar dado histórico achando que ele
+        nunca deveria ser tocado de novo."""
+        source = "unidade_gestora"
+        fqn = spark_session.table_fqn(source)
+        if spark.catalog.tableExists(fqn):
+            spark.sql(f"DROP TABLE {fqn}")
+        spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {spark_session.CATALOG}.{spark_session.NAMESPACE}")
+
+        # Cria a tabela "à mão", sem passar por write_source — simula um
+        # registro legado sem a coluna _data_extracao preenchida.
+        legado = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME LEGADO")])
+        legado.writeTo(fqn).using("iceberg").partitionedBy(F.col("ano")).create()
+        spark.sql(f"ALTER TABLE {fqn} ADD COLUMN `_data_extracao` date")
+        assert spark.table(fqn).collect()[0]["_data_extracao"] is None
+
+        atualizado = spark.createDataFrame([Row(codigo="1", ano=2026, titulo="NOME ATUALIZADO")])
+        silver_job.write_source(spark, source, atualizado, "2026-07-15")
+
+        rows = spark.table(fqn).collect()
+        assert len(rows) == 1
+        assert rows[0]["titulo"] == "NOME ATUALIZADO"

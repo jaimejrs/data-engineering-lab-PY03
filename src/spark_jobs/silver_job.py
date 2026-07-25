@@ -152,11 +152,21 @@ def dedup_batch(df, source: str):
     return df.dropDuplicates(list(DEDUP_KEYS[source]))
 
 
-def write_source(spark, source: str, df) -> None:
-    """Cria a tabela Iceberg (1ª carga) ou faz MERGE upsert (cargas seguintes)."""
+def write_source(spark, source: str, df, run_date: str) -> None:
+    """Cria a tabela Iceberg (1ª carga) ou faz MERGE upsert (cargas seguintes).
+
+    `run_date` é a `data_extracao` do lote (não a data do evento) — gravada em
+    `_data_extracao` e usada como guarda no MERGE (ver abaixo) para impedir
+    que reprocessar uma `data_extracao` mais antiga, depois de uma mais nova
+    já ter atualizado o mesmo registro, sobrescreva o dado novo pelo velho
+    (item 2 de docs/06-analise-critica.md — o `MERGE INTO` antes era
+    incondicional, `WHEN MATCHED THEN UPDATE *` sem nenhuma comparação).
+    """
     fqn = table_fqn(source)
     part_cols = PARTITION_COLS[source]
     keys = list(DEDUP_KEYS[source])
+
+    df = df.withColumn("_data_extracao", F.lit(run_date).cast("date"))
 
     if not spark.catalog.tableExists(fqn):
         (df.writeTo(fqn).using("iceberg").partitionedBy(*[F.col(c) for c in part_cols]).create())
@@ -184,16 +194,23 @@ def write_source(spark, source: str, df) -> None:
     aligned.createOrReplaceTempView("_silver_batch")
 
     on_clause = " AND ".join(f"t.`{k}` <=> s.`{k}`" for k in keys)
+    # `t._data_extracao IS NULL` cobre linhas gravadas antes desta coluna
+    # existir (schema evolution já populou a coluna via ALTER TABLE acima,
+    # mas o valor histórico é NULL) — nesse caso mantém o comportamento
+    # anterior (sempre atualiza). Para linhas já marcadas, só atualiza se o
+    # lote de entrada for da mesma `data_extracao` ou mais recente; `<=>`
+    # trata NULL igual a NULL sem virar NULL o resultado da comparação.
     spark.sql(
         f"""
         MERGE INTO {fqn} t
         USING _silver_batch s
         ON {on_clause}
-        WHEN MATCHED THEN UPDATE SET *
+        WHEN MATCHED AND (t.`_data_extracao` IS NULL OR s.`_data_extracao` >= t.`_data_extracao`)
+            THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
         """
     )
-    logger.info("MERGE em %s concluído (chave %s)", fqn, keys)
+    logger.info("MERGE em %s concluído (chave %s, data_extracao=%s)", fqn, keys, run_date)
 
 
 def run(run_date: str) -> dict:
@@ -209,7 +226,7 @@ def run(run_date: str) -> dict:
                 continue
             df = dedup_batch(add_partitions(normalize(df, source), source), source)
             summary[source] = df.count()
-            write_source(spark, source, df)
+            write_source(spark, source, df, run_date)
     finally:
         spark.stop()
 

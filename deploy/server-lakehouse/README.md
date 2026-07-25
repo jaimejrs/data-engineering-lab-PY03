@@ -14,7 +14,7 @@ O servidor **não** roda o compose da raiz. Ele tem uma topologia bespoke:
 | Rede Docker | própria do compose | **`dataadm_default`** (externa, já existente) |
 | Postgres metadados | `postgres` | `postgres` (container `datalab_postgres`) |
 | Postgres DW | `postgres_dw` | container `datalab_postgres_dw` |
-| Código Airflow | montado do repo | `/home/dataadm/airflow/{dags,src,sql}` (sync manual, não-git) |
+| Código Airflow | montado do repo | `/home/dataadm/airflow/{dags,src,sql}` (sync via `git pull`+`rsync`, ver abaixo) |
 
 Por isso `docker-compose.yml` aqui usa `network: default → external: dataadm_default`
 e todas as configs apontam para `hadoop`. `HADOOP_USER_NAME=root` é setado no Spark
@@ -30,15 +30,20 @@ e no Trino (o HDFS `aula_hadoop` roda como root/superusuário; sem isso, escreve
 - `conf/trino-postgres.properties` — catálogo Postgres do Trino → `datalab_postgres_dw`.
 
 Os Dockerfiles e o código (`docker/{spark,hive,trino}`, `src/`, `dbt/`) são os mesmos
-da raiz do repo — no servidor eles foram montados num diretório de staging
-(`/home/dataadm/lakehouse/`) com estas configs adaptadas por cima e enviados via `scp`
-(o servidor não alcança o GitHub — só IPv6).
+da raiz do repo — no servidor eles vivem num diretório de staging
+(`/home/dataadm/lakehouse/`) com estas configs adaptadas por cima.
+
+**Deploy (25/07/2026 em diante):** `./sync-from-git.sh` (`git pull` num clone
+read-only em `~/repo` + `rsync` pros diretórios live) — viabilizado pelo fix
+de egress IPv4 (`FIX-EGRESS-IPV4.md`), que também resolveu o servidor não
+alcançar o GitHub. Antes disso o código ia por `scp` arquivo a arquivo.
 
 ## Passos do deploy (resumo — runbook completo em docs/ interno)
 
 ```bash
-# 1. Staging: copiar docker/{spark,hive,trino}, src/, dbt/ do repo + estas configs
-#    adaptadas; enviar para /home/dataadm/lakehouse/ via scp.
+# 1. Staging: ./sync-from-git.sh --apply sincroniza src/ e dbt/ do repo (via
+#    git pull + rsync); docker/{spark,hive,trino} + estas configs adaptadas
+#    continuam avulsas (não fazem parte do sync automático, mudam raramente).
 # 2. DB do metastore no Postgres existente:
 docker exec datalab_postgres psql -U dlab -d datalab \
   -c "CREATE USER hive WITH PASSWORD 'hive';" -c "CREATE DATABASE metastore OWNER hive;"

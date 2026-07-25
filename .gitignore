@@ -21,6 +21,9 @@ docs/
 # Apresentação HTML
 apresentacao/
 
+# Guias internos das stacks utilizadas (alinhamento do time, não é entrega)
+stacks/
+
 # Artefatos de modelos treinados (binários grandes, reproduzíveis a partir do código)
 models/artifacts/
 

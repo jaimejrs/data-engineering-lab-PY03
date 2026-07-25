@@ -19,6 +19,20 @@ Lê a Gold (`iceberg.gold.fato_contrato` + dimensões) e a Silver
 (`iceberg.silver.contratos`, só para `tipo_objeto`/vigência, que ainda não estão
 modelados na Gold) via Trino — mesmo padrão de conexão dos notebooks de EDA.
 
+Desbalanceamento (tarefa 28, docs/Trabalho Final.pdf seção 7.3: "Trate o
+desbalanceamento [...] Use SMOTE ou ajuste de pesos caso converta para
+classificação supervisionada"): SMOTE/ajuste de peso por classe são técnicas
+de aprendizado SUPERVISIONADO — pressupõem rótulo (0/1) pra saber o que é
+minoria. Este modelo é deliberadamente não supervisionado (sem rótulo de
+"contrato irregular" em nenhuma fonte), então não há classe pra rebalancear
+no treino. O equivalente correto aqui é outro: calibrar o PONTO DE CORTE em
+produção a partir da distribuição real do score, não do treino —
+`summarize_score_distribution()` expõe percentis e contagem de contratos
+acima de thresholds usuais (0.7/0.8/0.9/0.95), logados no MLflow a cada run,
+pra quem for operacionalizar (Fernanda/analistas) escolher um limiar
+compatível com a capacidade real de revisão manual, em vez de um corte
+arbitrário embutido no código.
+
 Uso: python -m models.anomaly_detection [--contamination auto]
 """
 
@@ -147,6 +161,36 @@ def score_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
     return pd.Series(scaled, index=X.index, name="score_anomalia")
 
 
+# Thresholds usuais pra virar "sinalizado para revisão" — não é um corte fixo
+# no modelo, só o que reportamos pra quem for decidir o ponto de operação real
+# (ver docstring do módulo, seção "Desbalanceamento").
+SCORE_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)
+
+
+def summarize_score_distribution(resultado: pd.DataFrame) -> dict[str, float]:
+    """Percentis do score + contagem/percentual de contratos acima de cada
+    `SCORE_THRESHOLDS`. Sem rótulo, não dá pra saber a "proporção real" de
+    contratos irregulares — isso aqui é a alternativa: mostrar a distribuição
+    de verdade pra quem for calibrar o limiar de revisão, em vez de assumir
+    uma taxa de anomalia às cegas (tarefa 28).
+    """
+    scores = resultado["score_anomalia"]
+    total = len(scores)
+    summary: dict[str, float] = {
+        "score_p50": float(scores.quantile(0.50)),
+        "score_p75": float(scores.quantile(0.75)),
+        "score_p90": float(scores.quantile(0.90)),
+        "score_p95": float(scores.quantile(0.95)),
+        "score_p99": float(scores.quantile(0.99)),
+    }
+    for t in SCORE_THRESHOLDS:
+        n_acima = int((scores >= t).sum())
+        pct = t * 100
+        summary[f"n_contratos_score_ge_{pct:.0f}"] = float(n_acima)
+        summary[f"pct_contratos_score_ge_{pct:.0f}"] = float(n_acima / total) if total else 0.0
+    return summary
+
+
 def save_model(model: IsolationForest, feature_columns: list[str], path: str = ARTIFACT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     joblib.dump({"model": model, "feature_columns": feature_columns}, path)
@@ -216,18 +260,24 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
 
         resultado = raw[["id_contrato_origem", "ano"]].copy()
         resultado["score_anomalia"] = scores.values
+
+        distribuicao = summarize_score_distribution(resultado)
         mlflow.log_metrics(
             {
                 "score_medio": float(resultado["score_anomalia"].mean()),
                 "score_maximo": float(resultado["score_anomalia"].max()),
                 "n_contratos_escorados": float(len(resultado)),
+                **distribuicao,
             }
         )
         logger.info(
-            "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f",
+            "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f, "
+            "%s contratos com score >= 0.9 (%.1f%%)",
             len(resultado),
             resultado["score_anomalia"].mean(),
             resultado["score_anomalia"].max(),
+            int(distribuicao["n_contratos_score_ge_90"]),
+            distribuicao["pct_contratos_score_ge_90"] * 100,
         )
         if persist:
             write_scores(resultado)

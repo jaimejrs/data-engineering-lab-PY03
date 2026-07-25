@@ -8,6 +8,7 @@ Trino/rede — `extract_features` é testado só quanto ao formato da query
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from models import anomaly_detection
 
@@ -96,6 +97,23 @@ class TestSaveLoadModel:
             anomaly_detection.score_anomalia(model, X),
             anomaly_detection.score_anomalia(loaded_model, X),
         )
+
+
+class TestScoreDistribution:
+    def test_percentiles_and_threshold_counts(self):
+        resultado = pd.DataFrame({"score_anomalia": [0.1, 0.5, 0.72, 0.85, 0.91, 0.96, 1.0]})
+        summary = anomaly_detection.summarize_score_distribution(resultado)
+
+        assert summary["n_contratos_score_ge_70"] == 5  # 0.72, 0.85, 0.91, 0.96, 1.0
+        assert summary["n_contratos_score_ge_90"] == 3  # 0.91, 0.96, 1.0
+        assert summary["n_contratos_score_ge_95"] == 2  # 0.96, 1.0
+        assert summary["pct_contratos_score_ge_90"] == pytest.approx(3 / 7)
+        assert summary["score_p50"] == resultado["score_anomalia"].median()
+
+    def test_handles_empty_result(self):
+        resultado = pd.DataFrame({"score_anomalia": pd.Series(dtype=float)})
+        summary = anomaly_detection.summarize_score_distribution(resultado)
+        assert summary["pct_contratos_score_ge_70"] == 0.0
 
 
 class TestFeatureQuery:

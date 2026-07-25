@@ -2,7 +2,9 @@
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <!--
   Template do Hive Metastore. Tokens substituídos no build (docker/hive/Dockerfile,
-  via ARG): __HDFS_HOST__ (namenode|hadoop) e __METASTORE_DB_HOST__ (Postgres do HMS).
+  via ARG): __HDFS_HOST__ (namenode|hadoop), __METASTORE_DB_HOST__ (Postgres do HMS),
+  __METASTORE_DB_USER__/__METASTORE_DB_PASSWORD__ (usuário do backing store, ver
+  docker/postgres-init/01-metastore.sh — default 'hive'/'hive' só pro stack local).
 -->
 <configuration>
   <property>
@@ -15,11 +17,11 @@
   </property>
   <property>
     <name>javax.jdo.option.ConnectionUserName</name>
-    <value>hive</value>
+    <value>__METASTORE_DB_USER__</value>
   </property>
   <property>
     <name>javax.jdo.option.ConnectionPassword</name>
-    <value>hive</value>
+    <value>__METASTORE_DB_PASSWORD__</value>
   </property>
   <property>
     <name>hive.metastore.warehouse.dir</name>

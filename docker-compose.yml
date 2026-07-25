@@ -14,12 +14,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-dlab}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-d123}
       POSTGRES_DB: ${POSTGRES_DB:-datalab}
+      # Lido por docker/postgres-init/01-metastore.sh (usuário do backing
+      # store do Hive Metastore) — precisa bater com os args do build do
+      # serviço hive-metastore, abaixo.
+      METASTORE_DB_USER: ${METASTORE_DB_USER:-hive}
+      METASTORE_DB_PASSWORD: ${METASTORE_DB_PASSWORD:-hive}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Provisiona o DB `metastore` do Hive (só em volume novo — ver
-      # docker/postgres-init/01-metastore.sql para o fallback manual).
+      # docker/postgres-init/01-metastore.sh para o fallback manual).
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
     healthcheck:
@@ -174,6 +179,8 @@ services:
       args:
         HDFS_HOST: ${HDFS_HOST:-namenode}
         METASTORE_DB_HOST: ${METASTORE_DB_HOST:-postgres}
+        METASTORE_DB_USER: ${METASTORE_DB_USER:-hive}
+        METASTORE_DB_PASSWORD: ${METASTORE_DB_PASSWORD:-hive}
     image: datalab-hive-metastore:local
     container_name: datalab_hive_metastore
     mem_limit: 2g

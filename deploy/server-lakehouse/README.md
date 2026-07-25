@@ -38,6 +38,15 @@ read-only em `~/repo` + `rsync` pros diretórios live) — viabilizado pelo fix
 de egress IPv4 (`FIX-EGRESS-IPV4.md`), que também resolveu o servidor não
 alcançar o GitHub. Antes disso o código ia por `scp` arquivo a arquivo.
 
+**Automatizado (25/07/2026, à noite):** `auto-sync.py` roda via `cron`
+(`*/15 * * * *`, usuário `dataadm`) e dispara o `sync-from-git.sh --apply`
+sozinho — só quando há commit novo em `main` **e** a CI desse commit já
+terminou verde (consulta a Checks API pública do GitHub, sem token). Nunca
+reaplica o mesmo commit, nunca aplica com CI vermelho/pendente. Log em
+`~/auto-sync.log` (do próprio script) e `~/auto-sync-cron.log` (saída bruta
+do cron). Para checar: `tail -f ~/auto-sync.log`. Para rodar manualmente fora
+do cron (debug): `python3 ~/repo/deploy/server-lakehouse/auto-sync.py`.
+
 ## Passos do deploy (resumo — runbook completo em docs/ interno)
 
 ```bash

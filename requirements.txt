@@ -25,6 +25,9 @@ xgboost==2.0.3
 prophet==1.1.5
 mlflow==2.14.1
 
+# IA Generativa — relatório narrativo (models/narrative_report.py, tarefa 25)
+openai==1.51.0
+
 # Validação de qualidade de dados (opcional)
 great_expectations==0.18.19
 

@@ -79,6 +79,11 @@ services:
       TRINO_PORT: "8080"
       TRINO_USER: airflow
       TRINO_CATALOG: iceberg
+      # Componente de IA Generativa (models/narrative_report.py, tarefa 25) —
+      # lido do .env na raiz (nunca commitado); vazio aqui não quebra o build,
+      # só faz a task falhar em runtime se ninguém configurar a chave.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     entrypoint: /bin/bash
     command:
       - -c

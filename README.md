@@ -151,6 +151,7 @@ Copie `.env.example` para `.env` e ajuste os valores.
 | `HDFS_WEBHDFS_URL` / `HDFS_USER` | URL do NameNode (WebHDFS) e usuário HDFS | — |
 | `HDFS_HOST` | Hostname do HDFS (`namenode` no stack autônomo, `hadoop` no servidor) | namenode |
 | `TRINO_HOST` / `TRINO_PORT` / `TRINO_USER` / `TRINO_CATALOG` | Conexão do Trino — usada pelos notebooks de EDA em Silver/Gold | trino / 8080 / notebook / iceberg |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | Chave da API OpenAI e modelo usado pelo relatório narrativo (`models/narrative_report.py`) — `OPENAI_API_KEY` é obrigatório, sem default | — / gpt-4o-mini |
 
 > **Nunca commitar o `.env`** — já está no `.gitignore`. Só o `.env.example` (sem
 > credenciais reais) deve ir para o repositório.
@@ -208,7 +209,7 @@ tabelas já escritas).
 |---|---|---|
 | **Modelo 1** — detecção de anomalias em contratos | ✅ Treinado, avaliado e gravado na Gold | `models/anomaly_detection.py` (Isolation Forest, não supervisionado) + `notebooks/ml_anomalia_contratos.ipynb` |
 | **Modelo 2** — previsão de pagamentos trimestrais | ✅ Treinado, avaliado e gravado na Gold | `models/payment_forecast.py` (XGBoost, regressão por quantil) + `notebooks/ml_previsao_pagamentos.ipynb` |
-| Componente de IA generativa (relatório narrativo) | ⏳ Não iniciado | — |
+| **Componente de IA generativa** — relatório narrativo | ✅ Gerando relatórios em produção | `models/narrative_report.py` (LLM via API OpenAI) |
 
 **Modelo 1** lê `iceberg.gold.fato_contrato` + `dim_credor`/`dim_modalidade` e
 `iceberg.silver.contratos` (para `tipo_objeto`/vigência, ainda não modelados na
@@ -219,19 +220,30 @@ e histórico de infração do credor. O score é gravado em
 `fato_contrato` é recriada do zero a cada `dbt build`) e aparece em
 `fato_contrato.score_anomalia` via `LEFT JOIN` (`dbt/models/marts/fato_contrato.sql`).
 
-**Modelo 2** lê `iceberg.gold.fato_empenho` — usado como **proxy** de
-`iceberg.gold.fato_ordem_bancaria`, que ainda não existe na Gold (gap conhecido,
-`docs/06-analise-critica.md`) — agregado por órgão/trimestre, e prevê o valor do
+**Modelo 2** lê `iceberg.gold.fato_ordem_bancaria` — o pagamento efetivo ao
+credor (3º estágio da despesa: contrato → empenho → ordem bancária) —
+agregado por órgão/trimestre, excluindo ordens canceladas, e prevê o valor do
 **próximo** trimestre com intervalo de confiança (quantis 0.1/0.5/0.9 via
 `XGBRegressor`). Grava em `iceberg.gold.previsao_pagamento_orgao`.
 
-Os dois modelos são treinados/gravados automaticamente pela DAG `ml_inference`
-(ver "Orquestração" acima) — ainda não validada em produção.
+**Componente de IA generativa** lê os dois resultados acima (`score_anomalia_contrato`
++ `previsao_pagamento_orgao`) via Trino, monta um prompt só com os números já
+calculados (o LLM não recebe dado bruto nem infere valor novo — evita
+alucinação) e usa a API OpenAI (`gpt-4o-mini` por padrão — modelo de baixo
+custo, configurável via `OPENAI_MODEL`) para escrever um relatório em Markdown,
+em linguagem sem jargão técnico, para um gestor público sem formação em dados.
+Grava em `iceberg.gold.relatorio_narrativo` e em arquivo
+(`models/artifacts/relatorios/`). Requer `OPENAI_API_KEY` no `.env` (nunca
+commitado).
+
+Os três são treinados/gerados automaticamente pela DAG `ml_inference`
+(ver "Orquestração" acima) — **validada de ponta a ponta em produção**.
 
 ```bash
 python -m models.anomaly_detection --contamination auto
 python -m models.payment_forecast
-python -m pytest tests/test_anomaly_detection.py tests/test_payment_forecast.py -v
+python -m models.narrative_report
+python -m pytest tests/test_anomaly_detection.py tests/test_payment_forecast.py tests/test_narrative_report.py -v
 ```
 
 ## Particularidades importantes (não estão no enunciado oficial)
@@ -280,9 +292,9 @@ Validadas cruzando os contratos já extraídos contra o banco real.
 
 ## Status do projeto
 
-**Fases 1 e 2 concluídas de ponta a ponta** — Bronze, Silver e Gold rodando
-automaticamente no Airflow real, encadeadas por Dataset, com o dado histórico completo
-carregado e validado (ver seção "Camadas" acima).
+**Fases 1, 2 e 3 concluídas de ponta a ponta** — Bronze, Silver, Gold e ML/IA
+rodando automaticamente no Airflow real, encadeadas por Dataset, com o dado
+histórico completo carregado e validado (ver seção "Camadas" acima).
 
 | Frente | Status |
 |---|---|
@@ -291,7 +303,7 @@ carregado e validado (ver seção "Camadas" acima).
 | Gold — modelo estrela dbt-trino, SCD2, 32/32 testes | ✅ Concluída |
 | Orquestração — 4 DAGs encadeadas por Dataset (Bronze→Silver→Gold→ML) | ✅ 4/4 validadas em produção |
 | Fase 3 — ML/IA — Modelo 1 (anomalia) + Modelo 2 (previsão) | ✅ Treinados, avaliados e rodando em produção via DAG 4 |
-| Fase 3 — ML/IA — componente de IA generativa | ⏳ Próxima etapa |
+| Fase 3 — ML/IA — componente de IA generativa (relatório narrativo) | ✅ Gerando relatórios em produção via DAG 4 |
 
 Pendências conhecidas e assumidas conscientemente (reconciliação entre camadas,
 `ordem_bancaria_orcamentaria` sem modelo Gold, segurança lab-grade, SPOF do HDFS) estão

@@ -27,3 +27,8 @@ scikit-learn==1.5.0
 joblib==1.4.2
 xgboost==2.0.3
 trino==0.328.0
+
+# Componente de IA Generativa (models/narrative_report.py, tarefa 25) — LLM via
+# API OpenAI (modelo de baixo custo, gpt-4o-mini por padrão) para escrever o
+# relatório narrativo a partir do que os Modelos 1/2 já escoraram.
+openai==1.51.0

@@ -161,8 +161,6 @@ Copie `.env.example` para `.env` e ajuste os valores.
 | `TRINO_HOST` / `TRINO_PORT` / `TRINO_USER` / `TRINO_CATALOG` | Conexão do Trino — usada pelos notebooks de EDA em Silver/Gold | trino / 8080 / notebook / iceberg |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | Chave da API OpenAI e modelo usado pelo relatório narrativo (`models/narrative_report.py`) — `OPENAI_API_KEY` é obrigatório, sem default | — / gpt-4o-mini |
 
-> **Nunca commitar o `.env`** — já está no `.gitignore`. Só o `.env.example` (sem
-> credenciais reais) deve ir para o repositório.
 
 ## Como rodar
 
@@ -357,15 +355,6 @@ Pendências conhecidas e assumidas conscientemente (reconciliação entre camada
 `ordem_bancaria_orcamentaria` sem modelo Gold, segurança lab-grade, SPOF do HDFS) estão
 documentadas na pasta interna do time (`docs/`, não versionada).
 
-## Equipe
-
-| Pessoa | Frente |
-|---|---|
-| Nara | Ingestão — extractors da API e do Postgres (Bronze) |
-| Jaime | Orquestração e lakehouse — Airflow, Silver/Gold, evolução para Iceberg + Spark + Trino + dbt |
-| Carlos | Modelagem de dados |
-| Fernanda | ML — Fase 3 (anomalia e previsão) |
-| Benjamim | IA generativa — Fase 3 (relatório narrativo) |
 
 ---
 Ceará Transparente — Pipeline de Dados e IA

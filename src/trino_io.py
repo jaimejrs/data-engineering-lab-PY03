@@ -136,18 +136,49 @@ def replace_table(
     chunk_size: int | None = None,
     casts: dict[str, str] | None = None,
 ) -> None:
-    """`CREATE TABLE IF NOT EXISTS` (via `ddl`) + `DELETE FROM` (limpa) + `INSERT` do `df`.
+    """Substitui `table` inteira pelo conteúdo de `df`, via staging + swap atômico.
 
     Padrão de "re-score em lote": os modelos aqui não são incrementais (rodam
-    sobre o snapshot inteiro da Gold a cada execução), então a tabela de saída é
-    sempre substituída por completo, não fundida linha a linha.
+    sobre o snapshot inteiro da Gold a cada execução), então a tabela de saída
+    é sempre substituída por completo, não fundida linha a linha.
+
+    Antes (❌ item 15 de docs/06-analise-critica.md — "não corrigido na
+    raiz"): `DELETE FROM table` seguido de `bulk_insert` direto na tabela
+    final. A tabela ficava vazia/parcialmente escrita durante toda a gravação
+    (até dezenas de round-trips); se o processo morresse no meio (ex: o
+    escritor fantasma via `docker exec` documentado no mesmo item), `table`
+    ficava quebrada até a próxima execução corrigir.
+
+    Agora (✅): grava numa tabela de staging isolada (`{table}__staging`),
+    colapsa qualquer duplicata de linha via `CREATE TABLE ... AS SELECT
+    DISTINCT` (defesa contra reenvio/retry do cliente, não só o cenário já
+    identificado do escritor fantasma) e só então troca pro nome final via
+    `ALTER TABLE ... RENAME TO` — operação de metadado no Hive Metastore,
+    quase instantânea. `table` nunca fica vazia nem parcialmente escrita: ou
+    tem a versão antiga completa, ou já tem a nova completa. Tabelas
+    `__staging`/`__old` de uma execução anterior que tenha morrido no meio são
+    limpas no início da próxima chamada.
     """
+    staging = f"{table}__staging"
+    staging_dedup = f"{staging}__dedup"
+    old = f"{table}__old"
+    staging_ddl = ddl.replace(table, staging)
+
     own_conn = conn is None
     conn = conn or connect()
     try:
-        execute(ddl, conn=conn)
-        execute(f"DELETE FROM {table}", conn=conn)
-        bulk_insert(table, df, columns, conn=conn, chunk_size=chunk_size, casts=casts)
+        execute(ddl, conn=conn)  # garante que `table` existe (1ª chamada) — RENAME abaixo precisa da origem
+        for leftover in (staging, staging_dedup, old):
+            execute(f"DROP TABLE IF EXISTS {leftover}", conn=conn)
+
+        execute(staging_ddl, conn=conn)
+        bulk_insert(staging, df, columns, conn=conn, chunk_size=chunk_size, casts=casts)
+        execute(f"CREATE TABLE {staging_dedup} AS SELECT DISTINCT {', '.join(columns)} FROM {staging}", conn=conn)
+
+        execute(f"ALTER TABLE {table} RENAME TO {old}", conn=conn)
+        execute(f"ALTER TABLE {staging_dedup} RENAME TO {table}", conn=conn)
+        execute(f"DROP TABLE IF EXISTS {old}", conn=conn)
+        execute(f"DROP TABLE IF EXISTS {staging}", conn=conn)
     finally:
         if own_conn:
             conn.close()

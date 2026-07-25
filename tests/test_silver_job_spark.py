@@ -106,6 +106,25 @@ class TestDedupBatch:
         out = silver_job.dedup_batch(df, "empenhos")
         assert out.count() == 2
 
+    def test_tie_break_is_deterministic_across_repeated_calls(self, spark):
+        """Item 2 de docs/06-analise-critica.md: quando a MESMA data_extracao
+        traz duas versões DIFERENTES do mesmo registro (raro), o resultado do
+        dedup não pode depender do plano de execução do Spark — rodar várias
+        vezes sobre o mesmo lote sempre tem que sobrar a mesma linha."""
+        df = spark.createDataFrame([Row(id="1", ano=2026, valor=100.0), Row(id="1", ano=2026, valor=200.0)])
+        resultados = {silver_job.dedup_batch(df, "empenhos").collect()[0]["valor"] for _ in range(5)}
+        assert len(resultados) == 1  # sempre a mesma linha vencedora, nunca varia entre execuções
+
+    def test_tie_break_keeps_one_row_per_key_with_differing_non_key_values(self, spark):
+        df = spark.createDataFrame(
+            [Row(id="1", ano=2026, valor=100.0), Row(id="1", ano=2026, valor=200.0), Row(id="2", ano=2026, valor=1.0)]
+        )
+        out = silver_job.dedup_batch(df, "empenhos")
+        rows = out.collect()
+        assert len(rows) == 2
+        vencedora = [r for r in rows if r["id"] == "1"][0]
+        assert vencedora["valor"] in (100.0, 200.0)
+
 
 class TestMergeIdempotency:
     """O teste central do item 8: reprocessar o MESMO lote não deve duplicar

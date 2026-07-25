@@ -20,6 +20,7 @@ import sys
 
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType
+from pyspark.sql.window import Window
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if REPO_ROOT not in sys.path:
@@ -148,8 +149,22 @@ def add_partitions(df, source: str):
 
 
 def dedup_batch(df, source: str):
-    """Dedup do lote pela chave de negócio — obrigatório antes do MERGE (fonte com chave única)."""
-    return df.dropDuplicates(list(DEDUP_KEYS[source]))
+    """Dedup do lote pela chave de negócio, com desempate determinístico.
+
+    `dropDuplicates` sozinho (comportamento anterior) escolhe uma linha
+    arbitrária — não determinística, depende do plano físico/particionamento
+    interno do Spark — quando a MESMA `data_extracao` traz duas versões do
+    mesmo registro na mesma extração (raro; item 2 de
+    docs/06-analise-critica.md). Aqui o desempate usa um hash de todas as
+    colunas do registro como critério de ordenação: determinístico entre
+    execuções (dado o mesmo lote de entrada, sempre sobra a mesma linha), sem
+    inventar uma noção de "mais recente" que a fonte não fornece (não existe
+    `updated_at` por linha nas tabelas de origem).
+    """
+    keys = list(DEDUP_KEYS[source])
+    tie_break = F.md5(F.to_json(F.struct(*sorted(df.columns))))
+    window = Window.partitionBy(*keys).orderBy(tie_break.desc())
+    return df.withColumn("_dedup_rn", F.row_number().over(window)).filter(F.col("_dedup_rn") == 1).drop("_dedup_rn")
 
 
 def write_source(spark, source: str, df, run_date: str) -> None:

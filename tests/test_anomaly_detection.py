@@ -83,6 +83,31 @@ class TestScoreAnomalia:
         assert scores.idxmax() == X.index[-1]
 
 
+class TestFlagAnomalia:
+    """flag_anomalia — incorporado do script da Fernanda: classificação
+    binária do próprio Isolation Forest, complementar ao score contínuo."""
+
+    def test_returns_boolean_series(self):
+        X = anomaly_detection.build_feature_matrix(_raw_df(n=40, outlier_valor=5_000_000.0))
+        model = anomaly_detection.train_model(X, contamination=0.1)
+        flags = anomaly_detection.flag_anomalia(model, X)
+        assert flags.dtype == bool
+
+    def test_obvious_outlier_is_flagged(self):
+        X = anomaly_detection.build_feature_matrix(_raw_df(n=40, outlier_valor=5_000_000.0))
+        model = anomaly_detection.train_model(X, contamination=0.1)
+        flags = anomaly_detection.flag_anomalia(model, X)
+        assert flags.loc[X.index[-1]]  # o outlier obviamente inserido no fixture
+
+    def test_flag_rate_is_consistent_with_contamination(self):
+        X = anomaly_detection.build_feature_matrix(_raw_df(n=100, outlier_valor=5_000_000.0))
+        model = anomaly_detection.train_model(X, contamination=0.1)
+        flags = anomaly_detection.flag_anomalia(model, X)
+        # contamination=0.1 -> ~10% sinalizado (o próprio scikit-learn usa o
+        # score de treino pra fixar o limiar, não é exato, mas fica perto).
+        assert 0.05 <= flags.mean() <= 0.15
+
+
 class TestSaveLoadModel:
     def test_round_trips_model_and_feature_columns(self, tmp_path):
         X = anomaly_detection.build_feature_matrix(_raw_df())
@@ -116,6 +141,28 @@ class TestScoreDistribution:
         assert summary["pct_contratos_score_ge_70"] == 0.0
 
 
+class TestWriteScores:
+    def test_adds_flag_anomalia_column_via_alter_table_before_replace(self):
+        resultado = pd.DataFrame(
+            {
+                "id_contrato_origem": ["1", "2"],
+                "ano": [2026, 2026],
+                "score_anomalia": [0.9, 0.1],
+                "flag_anomalia": [True, False],
+            }
+        )
+        with (
+            patch.object(anomaly_detection.trino_io, "execute") as mock_execute,
+            patch.object(anomaly_detection.trino_io, "replace_table") as mock_replace,
+        ):
+            anomaly_detection.write_scores(resultado)
+
+        alter_sql = mock_execute.call_args[0][0]
+        assert "ADD COLUMN IF NOT EXISTS flag_anomalia" in alter_sql
+        assert "flag_anomalia" in mock_replace.call_args.kwargs["columns"]
+        assert "flag_anomalia" in mock_replace.call_args.kwargs["df"].columns
+
+
 class TestFeatureQuery:
     def test_reads_from_gold_fato_contrato_and_dimensions(self):
         query = anomaly_detection.FEATURE_QUERY
@@ -147,15 +194,33 @@ class TestRunMlflowTracking:
         mock_mlflow.start_run.assert_called_once()
 
     def test_logs_params_metrics_and_artifact(self, tmp_path):
-        _, _, _, mock_mlflow = self._patched_run(tmp_path, contamination=0.1)
+        resultado, _, _, mock_mlflow = self._patched_run(tmp_path, contamination=0.1)
 
         params = mock_mlflow.log_params.call_args[0][0]
         assert params["contamination"] == 0.1
         metrics = mock_mlflow.log_metrics.call_args[0][0]
         assert "score_medio" in metrics
         assert "n_contratos_escorados" in metrics
+        assert "n_contratos_flag_anomalia" in metrics
+        assert "pct_contratos_flag_anomalia" in metrics
         mock_mlflow.set_tag.assert_called_once_with("model_version", anomaly_detection.MODEL_VERSION)
         mock_mlflow.log_artifact.assert_called_once_with(str(tmp_path / "model.joblib"))
+        assert "flag_anomalia" in resultado.columns
+
+    def test_logs_model_in_mlflow_native_format(self, tmp_path):
+        self._patched_run(tmp_path)
+        # mlflow.sklearn é acessado via atributo do mock de `mlflow` — não
+        # precisa mockar `mlflow.sklearn` à parte.
+        with (
+            patch.object(anomaly_detection, "extract_features", return_value=_raw_df(n=10)),
+            patch.object(anomaly_detection, "write_scores"),
+            patch.object(anomaly_detection, "configure_mlflow"),
+            patch.object(anomaly_detection, "mlflow") as mock_mlflow,
+            patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+        ):
+            anomaly_detection.run()
+        mock_mlflow.sklearn.log_model.assert_called_once()
+        assert mock_mlflow.sklearn.log_model.call_args.kwargs.get("artifact_path") == "isolation_forest_model"
 
     def test_persist_false_still_logs_but_skips_write_scores(self, tmp_path):
         _, mock_write, _, mock_mlflow = self._patched_run(tmp_path, persist=False)

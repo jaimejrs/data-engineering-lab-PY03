@@ -244,8 +244,7 @@ plugar nas DAGs:
 | `eda_bronze.ipynb` | Bronze — JSON via `src/extractors/storage.py` | Schema, nulos e formatos de data do dado bruto, sem normalização |
 | `eda_silver.ipynb` | Silver — `iceberg.silver.*` via Trino | Volume por tabela, checagem de dedup do `MERGE INTO`, histórico de snapshots (time travel) |
 | `eda_gold.ipynb` | Gold — `iceberg.gold.*` via Trino | Modelo estrela, cobertura de join fato→dimensão, checagem do SCD2 de `dim_credor` |
-| `ml_anomalia_contratos.ipynb` | Gold + Silver via Trino, `models/anomaly_detection.py` | Treino e avaliação do Modelo 1 (detecção de anomalias) |
-| `ml_previsao_pagamentos.ipynb` | Gold via Trino, `models/payment_forecast.py` | Treino e avaliação do Modelo 2 (previsão trimestral de pagamentos) |
+| `eda_e_treinamento_ml.ipynb` | Gold + Silver via Trino, `models/anomaly_detection.py`, `models/payment_forecast.py`, `models/narrative_report.py` | Treino e avaliação dos Modelos 1/2 + demonstração da IA generativa (Fase 3 completa, nome do notebook original da Fernanda — dona da atividade) |
 
 Os últimos quatro exigem o stack do lakehouse no ar (Hive Metastore + Trino com as
 tabelas já escritas).
@@ -254,18 +253,20 @@ tabelas já escritas).
 
 | Modelo | Status | Onde |
 |---|---|---|
-| **Modelo 1** — detecção de anomalias em contratos | ✅ Treinado, avaliado e gravado na Gold | `models/anomaly_detection.py` (Isolation Forest, não supervisionado) + `notebooks/ml_anomalia_contratos.ipynb` |
-| **Modelo 2** — previsão de pagamentos trimestrais | ✅ Treinado, avaliado e gravado na Gold | `models/payment_forecast.py` (XGBoost, regressão por quantil) + `notebooks/ml_previsao_pagamentos.ipynb` |
+| **Modelo 1** — detecção de anomalias em contratos | ✅ Treinado, avaliado e gravado na Gold | `models/anomaly_detection.py` (Isolation Forest, não supervisionado) + `notebooks/eda_e_treinamento_ml.ipynb` |
+| **Modelo 2** — previsão de pagamentos trimestrais | ✅ Treinado, avaliado e gravado na Gold | `models/payment_forecast.py` (XGBoost, regressão por quantil) + `notebooks/eda_e_treinamento_ml.ipynb` |
 | **Componente de IA generativa** — relatório narrativo | ✅ Gerando relatórios em produção | `models/narrative_report.py` (LLM via API OpenAI) |
 
 **Modelo 1** lê `iceberg.gold.fato_contrato` + `dim_credor`/`dim_modalidade` e
 `iceberg.silver.contratos` (para `tipo_objeto`/vigência, ainda não modelados na
 Gold) via Trino, e produz um `score_anomalia` em `[0, 1]` por contrato — features:
 valor, dias de vigência, modalidade e tipo de objeto (one-hot), flag de emergência
-e histórico de infração do credor. O score é gravado em
-`iceberg.gold.score_anomalia_contrato` (tabela própria, não um `UPDATE` direto —
-`fato_contrato` é recriada do zero a cada `dbt build`) e aparece em
-`fato_contrato.score_anomalia` via `LEFT JOIN` (`dbt/models/marts/fato_contrato.sql`).
+e histórico de infração do credor. Grava também `flag_anomalia` (classificação
+binária do próprio `IsolationForest.predict()`, complementar ao score contínuo).
+Gravado em `iceberg.gold.score_anomalia_contrato` (tabela própria, não um
+`UPDATE` direto — `fato_contrato` é recriada do zero a cada `dbt build`) e
+aparece em `fato_contrato.score_anomalia` via `LEFT JOIN`
+(`dbt/models/marts/fato_contrato.sql`).
 
 **Modelo 2** lê `iceberg.gold.fato_ordem_bancaria` — o pagamento efetivo ao
 credor (3º estágio da despesa: contrato → empenho → ordem bancária) —

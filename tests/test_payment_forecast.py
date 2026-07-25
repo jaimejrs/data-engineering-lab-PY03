@@ -14,7 +14,13 @@ from models import payment_forecast as pf
 
 def _pagamentos_df(orgaos=("A",), anos=(2024, 2025), trimestres=(1, 2, 3, 4), valor_base=10_000.0):
     """8 trimestres por órgão (2 anos), valor crescente por trimestre — série limpa
-    o bastante para o lag/target não ficarem todos NaN nos testes."""
+    o bastante para o lag/target não ficarem todos NaN nos testes.
+
+    Sem `sk_orgao` de propósito — o pipeline usa só `codigo_orgao` (estável
+    entre anos) desde a correção do bug de agrupamento por `sk_orgao`
+    versionado por ano (`dim_orgao.sk_orgao = md5(codigo, ano)`, muda todo
+    ano pro MESMO órgão físico — ver topo de `models/payment_forecast.py`).
+    """
     rows = []
     t = 0
     for orgao in orgaos:
@@ -22,7 +28,6 @@ def _pagamentos_df(orgaos=("A",), anos=(2024, 2025), trimestres=(1, 2, 3, 4), va
             for trimestre in trimestres:
                 rows.append(
                     {
-                        "sk_orgao": orgao,
                         "codigo_orgao": orgao,
                         "nome_orgao": f"ÓRGÃO {orgao}",
                         "valor": valor_base + t * 500,
@@ -38,7 +43,7 @@ def _pagamentos_df(orgaos=("A",), anos=(2024, 2025), trimestres=(1, 2, 3, 4), va
 def _contratos_df(orgaos=("A",)):
     return pd.DataFrame(
         {
-            "sk_orgao": list(orgaos),
+            "codigo_orgao": list(orgaos),
             "valor_contrato": [100_000.0] * len(orgaos),
             "data_inicio": ["2024-01-01"] * len(orgaos),
             "data_termino": ["2025-12-31"] * len(orgaos),
@@ -85,6 +90,42 @@ class TestBuildQuarterlyPanel:
         assert panel.loc[panel["ano"] == 2024, "flag_ano_eleitoral"].eq(1).all()
         assert panel.loc[panel["ano"] == 2025, "flag_ano_eleitoral"].eq(0).all()
 
+    def test_lag_4_trimestres_has_real_value_across_year_boundary(self):
+        """Prova a correção do bug: agrupar por `codigo_orgao` (estável) em vez
+        de `sk_orgao` (= md5(codigo, ano), reseta todo ano) permite o lag de 4
+        trimestres (mesmo trimestre do ano anterior) enxergar através da
+        virada de ano. Antes da correção, isso era sempre NaN — 0 de 14.920
+        linhas reais em produção (ver docs/06-analise-critica.md, item achado
+        na comparação com o script da Fernanda)."""
+        panel = pf.build_quarterly_panel(_pagamentos_df(anos=(2024, 2025)), _contratos_df()).sort_values(
+            ["ano", "trimestre"]
+        )
+        q1_2025 = panel[(panel["ano"] == 2025) & (panel["trimestre"] == 1)].iloc[0]
+        q1_2024 = panel[(panel["ano"] == 2024) & (panel["trimestre"] == 1)].iloc[0]
+        assert pd.notna(q1_2025["lag_4_trimestres"])
+        assert q1_2025["lag_4_trimestres"] == q1_2024["valor_trimestre"]
+
+    def test_target_crosses_year_boundary_from_q4_to_next_q1(self):
+        """Q4 de um ano deve enxergar Q1 do ano seguinte como alvo — com o bug
+        do `sk_orgao` por ano, essa transição também ficava sempre NaN."""
+        panel = pf.build_quarterly_panel(_pagamentos_df(anos=(2024, 2025)), _contratos_df()).sort_values(
+            ["ano", "trimestre"]
+        )
+        q4_2024 = panel[(panel["ano"] == 2024) & (panel["trimestre"] == 4)].iloc[0]
+        q1_2025 = panel[(panel["ano"] == 2025) & (panel["trimestre"] == 1)].iloc[0]
+        assert pd.notna(q4_2024["target_proximo_trimestre"])
+        assert q4_2024["target_proximo_trimestre"] == q1_2025["valor_trimestre"]
+
+    def test_valor_contratado_ativo_covers_contract_signed_in_earlier_year(self):
+        """Contrato vigente 2024-01-01 a 2025-12-31 precisa contar como ativo
+        também nos trimestres de 2025, não só no ano em que foi assinado —
+        com o bug do `sk_orgao` por ano, contratos "de outro ano" nunca
+        batiam e o valor saía zerado (89,5% das linhas em produção, ver
+        docs/06-analise-critica.md)."""
+        panel = pf.build_quarterly_panel(_pagamentos_df(anos=(2024, 2025)), _contratos_df())
+        linha_2025 = panel[panel["ano"] == 2025].iloc[0]
+        assert linha_2025["valor_contratado_ativo"] == 100_000.0
+
 
 class TestBuildFeatureMatrix:
     def test_drops_rows_without_lag_1(self):
@@ -122,7 +163,7 @@ class TestTrainAndPredict:
         resultado = pf.forecast_next_quarter(panel, X, models)
 
         assert len(resultado) == 2  # 1 previsão por órgão (o último trimestre conhecido)
-        assert set(resultado["sk_orgao"]) == {"A", "B"}
+        assert set(resultado["codigo_orgao"]) == {"A", "B"}
         assert (resultado["valor_previsto_p10"] <= resultado["valor_previsto_p50"]).all()
         assert (resultado["valor_previsto_p50"] <= resultado["valor_previsto_p90"]).all()
 
@@ -163,6 +204,17 @@ class TestQueries:
     def test_contratos_query_reads_vigencia_from_silver(self):
         assert "iceberg.gold.fato_contrato" in pf.CONTRATOS_VIGENCIA_QUERY
         assert "iceberg.silver.contratos" in pf.CONTRATOS_VIGENCIA_QUERY
+
+    def test_contratos_query_joins_dim_orgao_for_stable_codigo(self):
+        # codigo_orgao (não sk_orgao) — ver correção do bug no topo do módulo.
+        assert "iceberg.gold.dim_orgao" in pf.CONTRATOS_VIGENCIA_QUERY
+        assert "codigo_orgao" in pf.CONTRATOS_VIGENCIA_QUERY
+
+    def test_pagamento_query_does_not_select_sk_orgao(self):
+        # sk_orgao só é usado internamente pro JOIN; não sai no resultado —
+        # evita reintroduzir por acidente o agrupamento pela chave errada.
+        assert "f.sk_orgao\n" not in pf.PAGAMENTO_QUERY
+        assert "SELECT\n    o.codigo AS codigo_orgao" in pf.PAGAMENTO_QUERY
 
 
 class TestRunMlflowTracking:

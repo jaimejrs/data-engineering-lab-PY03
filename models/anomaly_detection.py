@@ -42,6 +42,7 @@ import os
 
 import joblib
 import mlflow
+import mlflow.sklearn
 import pandas as pd
 import trino
 from dotenv import load_dotenv
@@ -161,6 +162,15 @@ def score_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
     return pd.Series(scaled, index=X.index, name="score_anomalia")
 
 
+def flag_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
+    """Classificação binária do próprio Isolation Forest (`predict() == -1`),
+    na taxa de `contamination` configurada no treino — complementar ao score
+    contínuo: enquanto `summarize_score_distribution()` deixa o limiar de
+    revisão em aberto pra calibrar depois, esta flag é "o que o modelo
+    classificaria como anomalia hoje, no `contamination` usado"."""
+    return pd.Series(model.predict(X) == -1, index=X.index, name="flag_anomalia")
+
+
 # Thresholds usuais pra virar "sinalizado para revisão" — não é um corte fixo
 # no modelo, só o que reportamos pra quem for decidir o ponto de operação real
 # (ver docstring do módulo, seção "Desbalanceamento").
@@ -203,28 +213,36 @@ def load_model(path: str = ARTIFACT_PATH) -> tuple[IsolationForest, list[str]]:
 
 
 def write_scores(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) -> None:
-    """Grava `(id_contrato_origem, ano, score_anomalia)` em `SCORE_TABLE`.
+    """Grava `(id_contrato_origem, ano, score_anomalia, flag_anomalia)` em `SCORE_TABLE`.
 
     Substitui a tabela inteira a cada chamada (re-score em lote, não
     incremental) — mesmo padrão de `trino_io.replace_table`.
     """
-    payload = resultado[["id_contrato_origem", "ano", "score_anomalia"]].copy()
+    payload = resultado[["id_contrato_origem", "ano", "score_anomalia", "flag_anomalia"]].copy()
     payload["model_version"] = model_version
     payload["scored_at"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    ddl = f"""
+        CREATE TABLE IF NOT EXISTS {SCORE_TABLE} (
+            id_contrato_origem varchar,
+            ano integer,
+            score_anomalia double,
+            flag_anomalia boolean,
+            model_version varchar,
+            scored_at timestamp
+        )
+    """
+    # `flag_anomalia` (tarefa 25/07, incorporado do script da Fernanda) é
+    # coluna nova — CREATE TABLE IF NOT EXISTS acima só cobre ambiente do
+    # zero; ambiente com a tabela já criada antes desta mudança precisa do
+    # ADD COLUMN explícito (idempotente) antes do replace_table.
+    trino_io.execute(f"ALTER TABLE IF EXISTS {SCORE_TABLE} ADD COLUMN IF NOT EXISTS flag_anomalia boolean")
 
     trino_io.replace_table(
         table=SCORE_TABLE,
         df=payload,
-        columns=["id_contrato_origem", "ano", "score_anomalia", "model_version", "scored_at"],
-        ddl=f"""
-            CREATE TABLE IF NOT EXISTS {SCORE_TABLE} (
-                id_contrato_origem varchar,
-                ano integer,
-                score_anomalia double,
-                model_version varchar,
-                scored_at timestamp
-            )
-        """,
+        columns=["id_contrato_origem", "ano", "score_anomalia", "flag_anomalia", "model_version", "scored_at"],
+        ddl=ddl,
         casts={"scored_at": "TIMESTAMP"},
     )
     logger.info("Gravados %s scores em %s", len(payload), SCORE_TABLE)
@@ -256,10 +274,17 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
 
         model = train_model(X, contamination=contamination)
         scores = score_anomalia(model, X)
+        flags = flag_anomalia(model, X)
         save_model(model, list(X.columns))
+        # Além do .joblib (usado por load_model/save_model pra recarregar
+        # model+feature_columns juntos), loga no formato nativo do MLflow —
+        # habilita Model Registry/serving direto pelo MLflow, sem precisar do
+        # nosso bundle. Incorporado do script da Fernanda (mlflow.sklearn.log_model).
+        mlflow.sklearn.log_model(model, artifact_path="isolation_forest_model")
 
         resultado = raw[["id_contrato_origem", "ano"]].copy()
         resultado["score_anomalia"] = scores.values
+        resultado["flag_anomalia"] = flags.values
 
         distribuicao = summarize_score_distribution(resultado)
         mlflow.log_metrics(
@@ -267,17 +292,21 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
                 "score_medio": float(resultado["score_anomalia"].mean()),
                 "score_maximo": float(resultado["score_anomalia"].max()),
                 "n_contratos_escorados": float(len(resultado)),
+                "n_contratos_flag_anomalia": float(resultado["flag_anomalia"].sum()),
+                "pct_contratos_flag_anomalia": float(resultado["flag_anomalia"].mean()),
                 **distribuicao,
             }
         )
         logger.info(
             "Scoring concluído: %s contratos, score médio %.4f, score máximo %.4f, "
-            "%s contratos com score >= 0.9 (%.1f%%)",
+            "%s contratos com score >= 0.9 (%.1f%%), %s sinalizados pelo predict() (%.1f%%)",
             len(resultado),
             resultado["score_anomalia"].mean(),
             resultado["score_anomalia"].max(),
             int(distribuicao["n_contratos_score_ge_90"]),
             distribuicao["pct_contratos_score_ge_90"] * 100,
+            int(resultado["flag_anomalia"].sum()),
+            resultado["flag_anomalia"].mean() * 100,
         )
         if persist:
             write_scores(resultado)

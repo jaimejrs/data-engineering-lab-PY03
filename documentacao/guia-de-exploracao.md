@@ -211,8 +211,7 @@ e o resultado dos testes da última execução.
 | `eda_bronze.ipynb` | Bronze (JSON) | Schema, nulos, formatos de data do dado bruto |
 | `eda_silver.ipynb` | Silver via Trino | Volume, dedup, snapshots (time travel) |
 | `eda_gold.ipynb` | Gold via Trino | Modelo estrela, cobertura de join, SCD2 |
-| `ml_anomalia_contratos.ipynb` | Gold+Silver via Trino | Treino/avaliação do Modelo 1 |
-| `ml_previsao_pagamentos.ipynb` | Gold via Trino | Treino/avaliação do Modelo 2 |
+| `eda_e_treinamento_ml.ipynb` | Gold+Silver via Trino | Treino/avaliação dos Modelos 1/2 + demonstração da IA generativa |
 
 ```bash
 # local, com o stack no ar

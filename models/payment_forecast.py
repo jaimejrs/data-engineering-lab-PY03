@@ -21,6 +21,23 @@ que existe na Gold:
   - ano eleitoral -> `ano % 2 == 0` (simplificação: no Brasil todo ano par tem
     eleição, municipal ou estadual/federal, alternando)
 
+BUG corrigido (25/07/2026, achado comparando com o script independente da
+Fernanda, dona da Fase 3/ML — ela chegou no mesmo problema por outro caminho,
+usando Prophet em vez de XGBoost, e documentou a correção no dela):
+`dim_orgao.sk_orgao = md5(codigo, ano)` — o MESMO órgão físico tem um
+`sk_orgao` diferente a cada ano. Agrupar a série temporal por `sk_orgao`
+(como este módulo fazia) reseta o grupo todo ano, então:
+  - `lag_4_trimestres` (mesmo trimestre do ano anterior) NUNCA tinha um valor
+    real — confirmado contra produção: 0 de 14.920 linhas com o campo
+    preenchido antes do fallback. Virava sempre uma cópia de `lag_1_trimestre`.
+  - `valor_contratado_ativo` só contava contratos assinados no MESMO ano do
+    trimestre sendo avaliado (porque a comparação também usava `sk_orgao`) —
+    89,5% das linhas saíam com o valor zerado, mesmo tendo contrato
+    plurianual vigente.
+Corrigido: todo agrupamento/junção por órgão agora usa `codigo_orgao` (estável
+no tempo), nunca `sk_orgao`. `sk_orgao` só aparece nas queries para fazer o
+JOIN com `dim_orgao`, não sai mais no resultado.
+
 Uso: python -m models.payment_forecast
 """
 
@@ -52,7 +69,6 @@ QUANTILES = (0.1, 0.5, 0.9)  # intervalo de confiança ~80% + mediana
 
 PAGAMENTO_QUERY = """
 SELECT
-    f.sk_orgao,
     o.codigo AS codigo_orgao,
     o.nome AS nome_orgao,
     f.valor,
@@ -65,13 +81,19 @@ JOIN iceberg.gold.dim_orgao o ON f.sk_orgao = o.sk_orgao
 WHERE f.valor IS NOT NULL AND f.sk_orgao IS NOT NULL AND NOT f.flag_cancelada
 """
 
+# `codigo_orgao` (não `sk_orgao`) — sk_orgao do contrato reflete o ANO EM QUE
+# ELE FOI ASSINADO (dim_orgao é versionada por (codigo, ano)); um contrato
+# plurianual assinado em 2023 e ainda vigente em 2026 tem sk_orgao "de 2023",
+# que nunca bateria com o sk_orgao "de 2026" do trimestre sendo avaliado. Ver
+# nota de correção do bug no topo do módulo.
 CONTRATOS_VIGENCIA_QUERY = """
 SELECT
-    f.sk_orgao,
+    o.codigo AS codigo_orgao,
     f.valor_contrato,
     sc.data_inicio,
     sc.data_termino
 FROM iceberg.gold.fato_contrato f
+JOIN iceberg.gold.dim_orgao o ON o.sk_orgao = f.sk_orgao
 JOIN iceberg.silver.contratos sc ON CAST(sc.id AS VARCHAR) = f.id_contrato_origem
 WHERE f.sk_orgao IS NOT NULL AND f.valor_contrato IS NOT NULL
 """
@@ -99,18 +121,23 @@ def _next_quarter(ano: int, trimestre: int) -> tuple[int, int]:
 
 
 def _valor_contratado_ativo_por_org(contratos: pd.DataFrame, quarters_por_org: pd.DataFrame) -> pd.Series:
-    """Para cada linha `(sk_orgao, ano, trimestre)`, soma `valor_contrato` dos
-    contratos daquele órgão cuja vigência sobrepõe o trimestre. Filtra por
+    """Para cada linha `(codigo_orgao, ano, trimestre)`, soma `valor_contrato`
+    dos contratos daquele órgão cuja vigência sobrepõe o trimestre. Filtra por
     órgão antes de comparar datas — cada grupo tem poucos contratos, então o
     laço por órgão é barato mesmo com o dataset inteiro carregado em memória.
+
+    Agrupa por `codigo_orgao` (estável no tempo), não por `sk_orgao` (que
+    muda a cada ano — ver nota de correção do bug no topo do módulo): um
+    contrato plurianual precisa continuar "ativo" nos trimestres de anos
+    seguintes ao de sua assinatura.
     """
     inicio = pd.to_datetime(contratos["data_inicio"], errors="coerce")
     termino = pd.to_datetime(contratos["data_termino"], errors="coerce")
     c = contratos.assign(_inicio=inicio, _termino=termino)
 
     resultado = pd.Series(0.0, index=quarters_por_org.index)
-    for sk_orgao, idx in quarters_por_org.groupby("sk_orgao").groups.items():
-        grupo_contratos = c[c["sk_orgao"] == sk_orgao]
+    for codigo_orgao, idx in quarters_por_org.groupby("codigo_orgao").groups.items():
+        grupo_contratos = c[c["codigo_orgao"] == codigo_orgao]
         if grupo_contratos.empty:
             continue
         for i in idx:
@@ -136,7 +163,7 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     contratos = contratos.assign(valor_contrato=pd.to_numeric(contratos["valor_contrato"], errors="coerce"))
 
     base = (
-        pagamentos.groupby(["sk_orgao", "codigo_orgao", "nome_orgao", "ano", "trimestre"])
+        pagamentos.groupby(["codigo_orgao", "nome_orgao", "ano", "trimestre"])
         .agg(valor_trimestre=("valor", "sum"))
         .reset_index()
     )
@@ -144,19 +171,22 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     top_mod = pagamentos["modalidade"].value_counts().head(TOP_MODALIDADES).index
     modalidade_dominante = (
         pagamentos.assign(modalidade=pagamentos["modalidade"].where(pagamentos["modalidade"].isin(top_mod), "OUTROS"))
-        .groupby(["sk_orgao", "ano", "trimestre"])["modalidade"]
+        .groupby(["codigo_orgao", "ano", "trimestre"])["modalidade"]
         .agg(lambda s: s.value_counts().idxmax())
         .reset_index()
     )
-    panel = base.merge(modalidade_dominante, on=["sk_orgao", "ano", "trimestre"], how="left")
+    panel = base.merge(modalidade_dominante, on=["codigo_orgao", "ano", "trimestre"], how="left")
 
-    panel = panel.sort_values(["sk_orgao", "ano", "trimestre"]).reset_index(drop=True)
+    # Agrupar por `codigo_orgao` (não `sk_orgao`, que muda a cada ano) é o que
+    # faz os lags abaixo enxergarem o histórico plurianual do órgão — ver nota
+    # de correção do bug no topo do módulo.
+    panel = panel.sort_values(["codigo_orgao", "ano", "trimestre"]).reset_index(drop=True)
     panel["valor_contratado_ativo"] = _valor_contratado_ativo_por_org(
-        contratos, panel[["sk_orgao", "ano", "trimestre"]]
+        contratos, panel[["codigo_orgao", "ano", "trimestre"]]
     )
     panel["flag_ano_eleitoral"] = (panel["ano"] % 2 == 0).astype(int)
 
-    grouped = panel.groupby("sk_orgao")["valor_trimestre"]
+    grouped = panel.groupby("codigo_orgao")["valor_trimestre"]
     panel["lag_1_trimestre"] = grouped.shift(1)
     panel["lag_4_trimestres"] = grouped.shift(4)
     # Alvo: valor do PRÓXIMO trimestre do mesmo órgão (o que o modelo aprende a prever).
@@ -244,7 +274,7 @@ def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict[flo
     to_predict = panel.loc[X.index][panel.loc[X.index, "target_proximo_trimestre"].isna()]
     preds = predict_quantiles(models, X.loc[to_predict.index])
 
-    resultado = to_predict[["sk_orgao", "codigo_orgao", "nome_orgao", "ano", "trimestre"]].copy()
+    resultado = to_predict[["codigo_orgao", "nome_orgao", "ano", "trimestre"]].copy()
     resultado[["ano_previsto", "trimestre_previsto"]] = resultado.apply(
         lambda r: pd.Series(_next_quarter(int(r["ano"]), int(r["trimestre"]))), axis=1
     )
@@ -329,6 +359,19 @@ def run(persist: bool = True) -> pd.DataFrame:
             }
         )
         mlflow.set_tag("model_version", MODEL_VERSION)
+
+        # Guarda de regressão para o bug do sk_orgao-por-ano (ver topo do
+        # módulo): se `lag_4_trimestres` real (não o fallback) cair a ~0 de
+        # novo, algum código voltou a agrupar por uma chave que reseta a cada
+        # ano. Logado sempre, não só quando falha, pra dar pra comparar a
+        # tendência entre runs no MLflow.
+        pct_lag4_real = float(panel.loc[X.index, "lag_4_trimestres"].notna().mean()) if len(X) else 0.0
+        mlflow.log_metric("pct_lag_4_trimestres_com_dado_real", pct_lag4_real)
+        if pct_lag4_real == 0.0:
+            logger.warning(
+                "lag_4_trimestres sem NENHUM valor real neste run (100%% fallback pra lag_1_trimestre) — "
+                "suspeita de regressão do bug de agrupamento por sk_orgao versionado por ano."
+            )
 
         metrics = evaluate(panel, X)  # holdout = último trimestre com alvo conhecido
         if metrics:

@@ -33,9 +33,8 @@ DockerOperator). `refresh_fato_contrato` reusa o padrão da DAG 3
 (`DockerOperator` na imagem `datalab-dbt`).
 
 Disparo: por Dataset (`GOLD_READY_DATASET`, emitido pela DAG 3). Modelos não
-supervisionados/sem rótulo — avaliação e evidência de treino ficam nos
-notebooks `notebooks/ml_anomalia_contratos.ipynb` e
-`notebooks/ml_previsao_pagamentos.ipynb`, não nesta DAG (que só re-treina e
+supervisionados/sem rótulo — avaliação e evidência de treino ficam no notebook
+`notebooks/eda_e_treinamento_ml.ipynb`, não nesta DAG (que só re-treina e
 escora em produção).
 """
 

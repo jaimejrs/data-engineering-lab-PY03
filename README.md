@@ -7,7 +7,12 @@ arquitetura **medalhão (Bronze → Silver → Gold)** que evoluiu de um *data l
 (transformação/serving da Gold via **dbt**), orquestrados de ponta a ponta pelo
 **Airflow**.
 
-`Fases 1 e 2 concluídas (Bronze → Silver → Gold, automáticas)` · Última atualização: 24/07/2026
+`Fases 1, 2 e 3 concluídas de ponta a ponta (Bronze → Silver → Gold → ML/IA, automáticas)` · Última atualização: 25/07/2026
+
+> Diagrama completo de arquitetura (fluxo de dados, orquestração e infraestrutura):
+> [`documentacao/diagrama-arquitetura.md`](documentacao/diagrama-arquitetura.md).
+> Guia de acesso a cada aplicação do projeto (Airflow, Trino, HDFS, MLflow,
+> Jupyter): [`documentacao/guia-de-exploracao.md`](documentacao/guia-de-exploracao.md).
 
 ## Visão geral
 
@@ -121,20 +126,23 @@ demais):
 | `bronze_extract` | `@daily` | API + Postgres → Bronze, valida, avança watermark (com lookback configurável). Emite `bronze://validated`. |
 | `silver_transform` | Dataset `bronze://validated` | `silver_job.py` via `DockerOperator` (imagem `datalab-spark`, `spark-submit local[*]`). Emite `silver://ready`. |
 | `gold_load` | Dataset `silver://ready` | `dbt build` via `DockerOperator` (imagem `datalab-dbt`) — 32 nós: modelos + snapshot SCD2 + testes. Emite `gold://ready`. |
-| `ml_inference` | Dataset `gold://ready` | Modelo 1 + Modelo 2 (`PythonOperator`, direto na imagem do Airflow) + `dbt build --select fato_contrato` (`DockerOperator`) para o score de anomalia aparecer no fato na mesma execução. |
+| `ml_inference` | Dataset `gold://ready` | Modelo 1 + Modelo 2 + relatório narrativo (`PythonOperator`, direto na imagem do Airflow) + `dbt build --select fato_contrato` (`DockerOperator`) para o score de anomalia aparecer no fato na mesma execução. |
 
 O cluster Spark standalone (`spark-master`/`worker`) fica reservado para **backfills
 manuais pesados** (validado processando os 1,38M de empenhos do histórico completo).
 
-> A DAG `ml_inference` (tarefas 20–24) está **validada de ponta a ponta no
-> Airflow real do servidor (24/07/2026)** — as 3 tasks rodaram com sucesso
-> contra a Gold real: `score_anomalia_contrato` (152.785 linhas) e
-> `previsao_pagamento_orgao` (4.423 linhas) gravadas via Trino, e
-> `fato_contrato.score_anomalia` foi de 100% `NULL` para **215.785/215.785
-> preenchido** depois do `refresh_fato_contrato`. Três bugs só apareceram
-> rodando contra produção (join sem `CAST`, lote de gravação lento, `Decimal`
-> do driver Trino quebrando o XGBoost) — corrigidos, ver `docs/infos.md` e
-> `docs/06-analise-critica.md` (item 13).
+> A DAG `ml_inference` (4 tasks: `score_anomalias`, `prever_pagamentos`,
+> `refresh_fato_contrato`, `gerar_relatorio_narrativo`) está **validada de
+> ponta a ponta no Airflow real do servidor (25/07/2026)** — cadeia completa
+> `bronze_extract → silver_transform → gold_load → ml_inference` disparada do
+> zero e concluída sozinha, sem intervenção manual, em ~5 minutos.
+> `score_anomalia_contrato` e `fato_contrato.score_anomalia` ficaram
+> 215.839/215.839 preenchidos (100% de cobertura de join), e o relatório
+> narrativo foi gerado com qualidade real via API OpenAI. Ver
+> [`documentacao/diagrama-arquitetura.md`](documentacao/diagrama-arquitetura.md)
+> para o diagrama completo de orquestração/infraestrutura e
+> `docs/06-analise-critica.md` para os bugs reais encontrados rodando contra
+> produção (itens 13 e 15).
 
 ## Configuração
 
@@ -158,6 +166,31 @@ Copie `.env.example` para `.env` e ajuste os valores.
 
 ## Como rodar
 
+### Passo a passo — do zero até o relatório narrativo
+
+```bash
+# 1. Configuração — copie e ajuste (nunca commite o .env real)
+cp .env.example .env
+
+# 2. Suba o stack completo (Postgres, HDFS, Airflow, Spark, Hive Metastore, Trino, Jupyter)
+docker compose up -d --build
+
+# 3. Acesse o Airflow (usuário/senha criados por airflow-init: admin/admin) e
+#    despause as 4 DAGs — bronze_extract, silver_transform, gold_load, ml_inference
+#    http://localhost:8080
+
+# 4. Dispare a DAG 1 manualmente (ou espere o agendamento @daily) — o resto
+#    da cadeia (Silver -> Gold -> ML/IA) dispara sozinho por Dataset
+docker exec <container_do_scheduler> airflow dags trigger bronze_extract
+```
+
+Isso sobe toda a infraestrutura e deixa a orquestração rodando; o restante
+desta seção mostra como rodar **cada etapa isoladamente**, fora do Airflow —
+útil para debug, desenvolvimento ou rodar um passo específico sem esperar a
+cadeia inteira.
+
+### Rodando cada etapa isoladamente
+
 ```bash
 # Bronze — os dois extractors têm como default a carga histórica completa
 # (--inicio 2022-01-10, data mínima real confirmada, até hoje)
@@ -170,12 +203,18 @@ spark-submit src/spark_jobs/silver_job.py --run-date 2026-07-24
 # Gold — Silver -> Iceberg via dbt (requer Trino no ar)
 cd dbt && dbt build
 
-# ML — Modelo 1 (anomalias) e Modelo 2 (previsão), lêem/gravam via Trino (requer Gold construída)
+# ML/IA (Fase 3) — lêem/gravam via Trino (requer Gold construída); nessa ordem,
+# pois o relatório narrativo lê o que os dois modelos já escoraram/preveram
 python -m models.anomaly_detection --contamination auto
 python -m models.payment_forecast
+python -m models.narrative_report   # requer OPENAI_API_KEY configurada no .env
 
 # Testes
 python -m pytest tests/ -v
+
+# Lint + formatação (ruff — ver pyproject.toml)
+ruff check .
+ruff format .
 ```
 
 Para uma janela específica (ex: extração incremental manual), passe `--inicio`/`--fim`
@@ -185,6 +224,14 @@ em ISO (`YYYY-MM-DD`):
 python -m src.extractors.api_extractor --inicio 2026-06-01 --fim 2026-06-03
 python -m src.extractors.postgres_extractor --inicio 2026-06-01 --fim 2026-06-04
 ```
+
+### Explorando o resultado
+
+Depois que o pipeline rodou (via Airflow ou manualmente), veja
+[`documentacao/guia-de-exploracao.md`](documentacao/guia-de-exploracao.md)
+para o passo a passo de acesso a cada aplicação (Airflow, Trino, HDFS,
+MLflow, Jupyter, dbt docs) e exemplos de query para explorar/analisar os
+dados em cada camada.
 
 ## Notebooks
 

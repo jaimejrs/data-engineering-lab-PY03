@@ -1,152 +1,164 @@
 # Diagrama de Arquitetura — Pipeline Ceará Transparente
 
-Última atualização: 22/07/2026. Status por componente conforme o [`checklist`](../docs/checklist.md)
-interno da equipe (não versionado) — aqui mantemos apenas o retrato público da arquitetura.
-Evolução para **lakehouse** (Silver em Iceberg, Spark, Hive Metastore) documentada em
-[`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md).
+Última atualização: 25/07/2026 — **Fases 1, 2 e 3 concluídas de ponta a ponta**,
+validadas rodando automaticamente no Airflow real do servidor (tarefa 26,
+cadeia completa Bronze→Silver→Gold→ML/IA sem intervenção manual). Evolução
+para **lakehouse** (Silver em Iceberg, Spark, Hive Metastore, Trino via dbt)
+documentada em [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md) e
+[`gold-dbt-trino.md`](gold-dbt-trino.md).
 
-## Visão geral (Medallion: Bronze → Silver → Gold → ML/IA)
+## 1. Visão geral — fluxo de dados (Medallion: Bronze → Silver → Gold → ML/IA)
 
 ```mermaid
 flowchart LR
     subgraph Fontes
         API["API REST\nCeará Transparente\n(contratos)"]
-        PG["PostgreSQL de origem\n(empenhos, ordem_bancaria_\norcamentaria, unidade_gestora)"]
+        PG[("PostgreSQL de origem\nempenhos · ordem_bancaria_orcamentaria\nunidade_gestora")]
     end
 
-    subgraph Bronze["Bronze — HDFS (bruto)"]
-        B_CONTRATOS[("contratos/")]
-        B_EMPENHOS[("empenhos/")]
-        B_OB[("ordem_bancaria_orcamentaria/")]
-        B_UG[("unidade_gestora/")]
+    subgraph Bronze["BRONZE — HDFS (JSON bruto)"]
+        B[("/bronze/&lt;fonte&gt;/ano=/mes=/data_extracao=")]
     end
 
-    subgraph Silver["Silver — Iceberg (HDFS + Hive Metastore)"]
-        S["lakehouse.silver.*\nMERGE INTO · snapshots · particionado ano/mês"]
+    subgraph Silver["SILVER — Iceberg (HDFS) · catálogo Hive Metastore"]
+        S[("lakehouse.silver.*\nMERGE INTO · dedup entre execuções")]
     end
 
-    subgraph Gold["Gold — Iceberg (HDFS) via dbt-trino"]
-        DIM["dim_credor · dim_orgao\ndim_modalidade · dim_tempo"]
-        FATO["fato_contrato · fato_empenho"]
+    subgraph Gold["GOLD — Iceberg (HDFS) via dbt-trino"]
+        DIM["dim_credor (SCD2) · dim_orgao\ndim_modalidade · dim_tempo"]
+        FATO["fato_contrato · fato_empenho\nfato_ordem_bancaria"]
     end
 
-    subgraph MLIA["ML / IA"]
-        M1["Isolation Forest\n(anomalias)"]
-        M2["XGBoost/Prophet\n(previsão trimestral)"]
-        LLM["LLM\n(relatório narrativo)"]
+    subgraph MLIA["ML / IA — Fase 3"]
+        M1["Modelo 1\nIsolation Forest\n(score de anomalia)"]
+        M2["Modelo 2\nXGBoost quantile\n(previsão trimestral)"]
+        M3["IA Generativa\nLLM via API OpenAI\n(relatório narrativo)"]
     end
 
-    API -->|extract_api| B_CONTRATOS
-    PG -->|extract_postgres| B_EMPENHOS
-    PG -->|extract_postgres| B_OB
-    PG -->|extract_postgres| B_UG
-
-    B_CONTRATOS --> S
-    B_EMPENHOS --> S
-    B_OB --> S
-    B_UG --> S
-
-    S --> DIM --> FATO
-    FATO --> M1 --> FATO
-    FATO --> M2
-    M1 --> LLM
-    M2 --> LLM
-
-    classDef done fill:#1a7f37,color:#fff,stroke:none;
-    classDef partial fill:#9a6700,color:#fff,stroke:none;
-    classDef pending fill:#57606a,color:#fff,stroke:none;
-
-    class B_EMPENHOS,B_OB,B_UG,B_CONTRATOS done
-    class S,DIM,FATO,M1,M2,LLM pending
+    API -->|extract_api| B
+    PG -->|extract_postgres| B
+    B -->|silver_job.py — Spark| S
+    S -->|dbt build — Trino| DIM --> FATO
+    FATO -->|score_anomalia_contrato| M1 -->|LEFT JOIN| FATO
+    FATO -->|previsao_pagamento_orgao| M2
+    M1 --> M3
+    M2 --> M3
+    M3 -->|relatorio_narrativo| Gold
 ```
 
-**Legenda de status:** 🟢 verde = concluído e validado dentro do Airflow · 🟠 laranja = concluído via
-workaround manual (fora do Airflow) · ⚪ cinza = não iniciado.
+**Legenda de status:** todas as camadas acima estão **✅ concluídas e
+validadas rodando de verdade dentro do Airflow**, sem workaround manual — ver
+seção "Status resumido" no final deste documento.
 
-## Orquestração — DAGs do Airflow
+## 2. Orquestração — dependência entre as 4 DAGs (por Dataset)
 
 ```mermaid
-flowchart TB
-    subgraph DAG1["DAG 1 — bronze_extract (funcional ponta a ponta — ver nota sobre extract_api)"]
+flowchart LR
+    subgraph DAG1["DAG 1 — bronze_extract (@daily)"]
         d1a[extract_postgres] --> d1c[validate]
         d1b[extract_api] --> d1c
         d1c --> d1d[advance_watermark]
     end
-    subgraph DAG2["DAG 2 — Silver (SparkSubmitOperator -> silver_job.py)"]
-        d2a[transform: Bronze -> Iceberg MERGE]
+    subgraph DAG2["DAG 2 — silver_transform"]
+        d2a["transform\n(Spark: silver_job.py)"]
     end
-    subgraph DAG3["DAG 3 — Gold (DockerOperator -> dbt build)"]
-        d3a[dbt-trino: Silver Iceberg -> Gold Iceberg]
+    subgraph DAG3["DAG 3 — gold_load"]
+        d3a["dbt_build\n(Trino: dbt build)"]
     end
-    subgraph DAG4["DAG ML (não implementada)"]
-        d4a[anomaly_detection]
-        d4b[payment_forecast]
+    subgraph DAG4["DAG 4 — ml_inference"]
+        d4a[score_anomalias] --> d4c[refresh_fato_contrato]
+        d4a --> d4d[gerar_relatorio_narrativo]
+        d4b[prever_pagamentos] --> d4d
     end
 
-    DAG1 -.depende de tarefas 10/13/14.-> DAG2 -.depende de tarefas 15/16.-> DAG3 --> DAG4
+    d1d -.->|Dataset bronze://validated| d2a
+    d2a -.->|Dataset silver://ready| d3a
+    d3a -.->|Dataset gold://ready| d4a
+    d3a -.->|Dataset gold://ready| d4b
 ```
 
-## Infraestrutura (`docker-compose.yml`)
+Disparo **por Dataset**, não por horário fixo (só a DAG 1 é `@daily`) — cada
+DAG dispara assim que a anterior emite seu Dataset de saída, nunca antes dos
+dados estarem prontos. Cadeia completa validada rodando do zero sem
+intervenção manual: ~5 minutos do trigger da Bronze até o relatório
+narrativo sair (`gerar_relatorio_narrativo`).
+
+## 3. Infraestrutura — containers, portas e conexões
 
 ```mermaid
 flowchart LR
     subgraph Docker["docker-compose.yml"]
-        PG_META[("postgres\n(metadados Airflow +\nDB metastore do Hive)")]
-        PG_DW[("postgres_dw :5434\n(Gold/DW)")]
-        NN["namenode\n(HDFS, WebHDFS :9870)"]
+        PG_META[("postgres :5432\n(metadados Airflow +\nDB metastore do Hive)")]
+        NN["namenode\nHDFS · WebHDFS :9870"]
         DN["datanode"]
-        AF_INIT["airflow-init"]
         AF_WEB["airflow-webserver :8080"]
-        AF_SCH["airflow-scheduler\n(spark-submit / DockerOperator)"]
+        AF_SCH["airflow-scheduler\n(models/ montado — DAG 4\nvia PythonOperator direto)"]
         SM["spark-master :7077"]
         SW["spark-worker (executores)"]
         HMS["hive-metastore :9083"]
         TR["trino :8085\n(connector Iceberg)"]
-        DBT["dbt-trino\n(container sob demanda)"]
+        DBT["dbt-trino\n(container sob demanda,\nDockerOperator)"]
         JUP["jupyter :8888"]
     end
     SRC_PG["PostgreSQL de origem\n(externo — infra do curso)"]
     SRC_API["API Ceará Transparente\n(externa)"]
+    OPENAI[("API OpenAI\ngpt-4o-mini")]
+    MLF[("models/artifacts/mlruns/\n(MLflow, arquivo local)")]
 
     AF_SCH -->|extract_postgres| SRC_PG
     AF_SCH -->|extract_api| SRC_API
     AF_SCH -->|grava Bronze JSON| NN
-    AF_SCH -->|DAG2: submit Silver| SM --> SW
-    AF_SCH -->|DAG3: dispara dbt| DBT --> TR
-    SW -->|dados Iceberg Silver| NN
+    AF_SCH -->|DAG2: SparkSubmitOperator| SM --> SW
+    AF_SCH -->|DAG3/DAG4: DockerOperator| DBT --> TR
+    AF_SCH -->|DAG4: score/previsão/relatório| MLF
+    AF_SCH -->|DAG4: relatório narrativo| OPENAI
+    SW -->|Silver Iceberg| NN
     TR -->|Gold Iceberg| NN
     SM -->|catálogo| HMS
     TR -->|catálogo| HMS
     HMS -->|warehouse + metadados| PG_META
     HMS -->|warehouse| NN
-    TR -.->|federação opcional| PG_DW
     NN --- DN
     AF_WEB --> PG_META
     AF_SCH --> PG_META
-    AF_INIT --> PG_META
     JUP -.-> NN
+    JUP -.->|EDA Silver/Gold| TR
 ```
 
-> **Nota sobre o Postgres de origem:** `SOURCE_POSTGRES_URL` aponta para um banco
-> fornecido pela infraestrutura do curso (fora deste `docker-compose.yml`, hoje
-> acessado via relay `pg-source-relay.service` no servidor do Datalab). O compose
-> não tenta recriar esse banco — apenas o consome como fonte externa.
+> **No servidor real do time**, a topologia é um **overlay aditivo** sobre a
+> infra já existente do curso (Hadoop compartilhado `aula_hadoop`, dois
+> Postgres — metadados do Airflow e DW) em vez do stack autônomo acima. A
+> diferença não é estrutural, só *quais containers já existiam* antes do
+> lakehouse ser adicionado — ver
+> [`deploy/server-lakehouse/`](../deploy/server-lakehouse/).
 >
-> **Nota sobre `extract_api`:** o host não tem saída IPv4 (só IPv6), mas a API do
-> Ceará Transparente é IPv4-only. `extra_hosts` neste compose aponta o hostname da
-> API para um relay TCP via Tailscale — ver
-> [`workaround-egress-ipv4-api.md`](workaround-egress-ipv4-api.md) para o mecanismo
-> completo e a limitação (depende de uma máquina do time estar ligada).
+> **Egress IPv4:** o `datalab-server` só tinha rota IPv6 até 24/07/2026
+> (`dhcp4: true` no netplan corrigiu isso na raiz) — `extract_api` não
+> depende mais de relay TCP em máquina pessoal, ver
+> [`workaround-egress-ipv4-api.md`](workaround-egress-ipv4-api.md) para o
+> histórico do workaround já descontinuado.
 
-## Status resumido (22/07/2026)
+## Status resumido (25/07/2026)
 
 | Camada/Componente | Status |
 |---|---|
-| Bronze — `empenhos`, `ordem_bancaria_orcamentaria`, `unidade_gestora` | ✅ Validado no HDFS real |
-| Bronze — `contratos` (API) | ✅ Validado dentro do Airflow (19/07 — via relay, ver nota acima) |
-| DAG 1 (`bronze_extract`) no Airflow | ✅ 4/4 tasks com sucesso ponta a ponta (`extract_postgres`, `extract_api`, `validate`, `advance_watermark`) — primeira execução 100% dentro do Airflow |
-| Silver — **Iceberg via Spark** (`silver_job.py`, `MERGE INTO`) | 🟠 Implementada; validação ponta a ponta no cluster pendente (ver [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md)) |
-| Gold — **Iceberg via dbt-trino** (`dbt/`, dims/fatos + testes) | 🟠 Implementada; validação ponta a ponta pendente (ver [`gold-dbt-trino.md`](gold-dbt-trino.md)) |
-| Cluster Spark + Hive Metastore + Trino + tabelas Iceberg (HDFS) | 🟠 Adicionados ao `docker-compose.yml`; wiring de versões/classpath a validar com o stack no ar |
-| ML/IA | ⚪ Não iniciada |
-| `docker-compose.yml` reproduzível | ✅ Postgres (+DB metastore), Hadoop NN/DN, Airflow custom, Jupyter, **spark-master/worker**, **hive-metastore**, **trino**, **dbt** |
+| Bronze — `empenhos`, `ordem_bancaria_orcamentaria`, `unidade_gestora`, `contratos` | ✅ Validado no HDFS real, extração incremental com watermark + lookback |
+| DAG 1 (`bronze_extract`) | ✅ 4/4 tasks — `extract_postgres`, `extract_api` (direto, sem relay), `validate`, `advance_watermark` |
+| Silver — Iceberg via Spark (`silver_job.py`, `MERGE INTO`) | ✅ Validada em produção, idempotência provada por teste real (Spark+Iceberg local) |
+| Gold — Iceberg via dbt-trino (32 nós: dims/fatos/snapshot SCD2/testes) | ✅ Validada em produção, 32/32 PASS |
+| Reconciliação Bronze→Silver→Gold | ✅ `bronze_ingestao` + `gold_reconciliacao`, testes WARN |
+| Cluster Spark + Hive Metastore + Trino + Iceberg (HDFS) | ✅ No ar, limites de recurso configurados |
+| Modelo 1 — detecção de anomalias (Isolation Forest) | ✅ Treinado, escorado (215.839 contratos), threshold calibrável via distribuição real do score |
+| Modelo 2 — previsão de pagamentos (XGBoost quantile) | ✅ Treinado sobre `fato_ordem_bancaria` real (não mais proxy) |
+| IA Generativa — relatório narrativo (LLM) | ✅ Gerando relatórios em produção via API OpenAI |
+| MLflow tracking (Modelos 1 e 2) | ✅ Params/métricas/artefatos logados a cada run |
+| DAG 4 (`ml_inference`) | ✅ 4/4 tasks — `score_anomalias`, `prever_pagamentos`, `refresh_fato_contrato`, `gerar_relatorio_narrativo` |
+| Orquestração — 4 DAGs encadeadas por Dataset | ✅ Cadeia completa validada rodando automaticamente, sem intervenção manual |
+| CI (lint + testes + dbt parse) | ✅ 4 jobs verdes (`ruff`, `pytest` leve, `pytest` Spark, `dbt parse`) |
+
+Pendências conhecidas (não bloqueantes, ver
+[`03-pendencias-e-melhorias.md`](../docs/03-pendencias-e-melhorias.md) e
+[`06-analise-critica.md`](../docs/06-analise-critica.md)): segurança
+lab-grade (Trino/HMS sem auth), reconciliação Bronze→Silver não é
+byte-a-byte, `bulk_insert`/`replace_table` do Trino não são comprovadamente
+idempotentes sob retry de rede (item 15).

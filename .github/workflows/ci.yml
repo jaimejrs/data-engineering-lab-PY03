@@ -19,7 +19,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest \
-            scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2
+            scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2 openai==1.51.0
       - name: pytest (regras/normalização/extractors)
         run: pytest -q
       - name: Compila os jobs PySpark (sintaxe; pyspark não instalado)

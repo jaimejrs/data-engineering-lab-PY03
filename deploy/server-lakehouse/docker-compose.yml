@@ -78,6 +78,43 @@ services:
       - hive-metastore
     restart: unless-stopped
 
+  superset-init:
+    build:
+      context: ./docker/superset
+      network: host
+    image: datalab-superset:local
+    container_name: lakehouse_superset_init
+    environment: &superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-changeme-dev-only-secret-key}
+      DATABASE_DIALECT: postgresql
+      DATABASE_USER: ${SUPERSET_DB_USER:-superset}
+      DATABASE_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_DB: superset
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER:-admin} --firstname Superset --lastname Admin --email admin@datalab.com --password ${SUPERSET_ADMIN_PASSWORD:-admin} || true && superset init"
+    volumes:
+      - superset_home:/app/superset_home
+
+  superset:
+    image: datalab-superset:local
+    container_name: lakehouse_superset
+    mem_limit: 2g
+    cpus: 1.0
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+    environment: *superset-env
+    ports:
+      # 8088 já é do YARN do Hadoop (aula_hadoop, container do curso).
+      - "8089:8088"
+    volumes:
+      - superset_home:/app/superset_home
+    restart: unless-stopped
+
   # dbt (adapter Trino) — sob demanda: `docker compose run --rm dbt build`.
   dbt:
     build:
@@ -96,3 +133,6 @@ networks:
   default:
     external: true
     name: dataadm_default
+
+volumes:
+  superset_home:

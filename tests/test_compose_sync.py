@@ -22,7 +22,7 @@ SERVER_COMPOSE = os.path.join(ROOT, "deploy", "server-lakehouse", "docker-compos
 # Serviços do overlay lakehouse presentes (com o mesmo papel) nos dois
 # arquivos — nomes de container diferem de propósito (datalab_* vs
 # lakehouse_*), não comparados aqui.
-SHARED_SERVICES = ["hive-metastore", "spark-master", "spark-worker", "trino"]
+SHARED_SERVICES = ["hive-metastore", "spark-master", "spark-worker", "trino", "superset"]
 
 
 def _load(path):

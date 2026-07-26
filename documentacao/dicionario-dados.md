@@ -214,6 +214,7 @@ de negócio). Contagens da carga completa (19/07/2026) entre parênteses.
 | `num_spu` | `VARCHAR` | Chave p/ ligar (best-effort, ~7-8% de match real) com `cod_contrato` de `fato_empenho`/`fato_ordem_bancaria` — sem FK obrigatória. Propagada da Silver a partir de 26/07/2026 (antes só existia lá, então o join não era possível na Gold) | `contratos.num_spu` |
 | `sk_credor`, `sk_orgao`, `sk_modalidade`, `sk_tempo` | `BIGINT` FK | Chaves das dimensões | lookup pelas chaves de negócio |
 | `valor_contrato`, `valor_pago`, `valor_empenhado` | `NUMERIC(15,2)` | Valores financeiros | `contratos.valor_contrato`, `calculated_valor_pago`, `calculated_valor_empenhado` — API já calcula essas duas últimas, preferidas em vez de recalcular via join fraco com `empenhos`/`ordem_bancaria_orcamentaria` |
+| `valor_aditivo`, `valor_ajuste` | `NUMERIC(15,2)` | Aditivo/ajuste contratual (API já calcula) — `valor_aditivo` explica ~49% dos casos de `valor_pago > valor_contrato`. Propagadas em 26/07/2026 (antes só existiam na Silver) | `contratos.calculated_valor_aditivo`, `calculated_valor_ajuste` |
 | `status` | `VARCHAR` | `descricao_situacao` | `contratos.descricao_situacao` |
 | `flag_emergency` | `BOOLEAN` | Contrato de emergência | `contratos.emergency` |
 | `score_anomalia` | `NUMERIC(5,4)` | `NULL` até a Fase 3 | gravado pela tarefa 24 |

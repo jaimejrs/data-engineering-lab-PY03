@@ -46,6 +46,10 @@ models:
         tests: [not_null]
       - name: num_spu
         description: "Chave p/ ligar (best-effort) com cod_contrato de fato_empenho/fato_ordem_bancaria — ~7-8% de match real, sem FK obrigatória."
+      - name: valor_aditivo
+        description: "Valor de aditivo contratual (da própria API de origem). Explica ~49% dos casos de valor_pago > valor_contrato — ver assert_pagamento_dentro_do_contratado.sql."
+      - name: valor_ajuste
+        description: "Valor de ajuste contratual (da própria API de origem)."
       - name: sk_credor
         tests:
           - relationships:

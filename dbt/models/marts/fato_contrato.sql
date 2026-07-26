@@ -56,6 +56,12 @@ select
     try_cast(contratos.valor_contrato as decimal(15, 2)) as valor_contrato,
     try_cast(contratos.calculated_valor_pago as decimal(15, 2)) as valor_pago,
     try_cast(contratos.calculated_valor_empenhado as decimal(15, 2)) as valor_empenhado,
+    -- Explica boa parte (~49%) dos casos de valor_pago > valor_contrato —
+    -- aditivo contratual não refletido de volta no valor_contrato original.
+    -- Também não era propagada até aqui (achado da análise crítica de
+    -- 26/07/2026, ver assert_pagamento_dentro_do_contratado.sql).
+    try_cast(contratos.calculated_valor_aditivo as decimal(15, 2)) as valor_aditivo,
+    try_cast(contratos.calculated_valor_ajuste as decimal(15, 2)) as valor_ajuste,
     contratos.descricao_situacao as status,
     coalesce(try_cast(contratos.emergency as boolean), false) as flag_emergency,
     cast(sa.score_anomalia as decimal(5, 4)) as score_anomalia

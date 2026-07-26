@@ -13,6 +13,8 @@ select
     valor_contrato,
     calculated_valor_pago,
     calculated_valor_empenhado,
+    calculated_valor_aditivo,
+    calculated_valor_ajuste,
     descricao_situacao,
     emergency
 from {{ source('silver', 'contratos') }}

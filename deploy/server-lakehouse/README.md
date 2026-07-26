@@ -68,3 +68,45 @@ docker compose run --rm dbt build
 
 Validado em 23/07/2026: Silver (empenhos 1.376.379 · contratos 215.402 · unidade_gestora 5.011),
 Gold dbt-trino (fato_empenho 1.376.379 · fato_contrato 215.518), 22/22 testes dbt PASS.
+
+## Coletores de observabilidade (cron)
+
+Além do `auto-sync.py`, dois coletores rodam via `cron` (usuário `dataadm`),
+gravando em `iceberg.audit` — mesmo padrão (script sem dependência externa,
+grava via `docker exec ... trino --execute`):
+
+```
+*/5 * * * * /usr/bin/python3 /home/dataadm/repo/deploy/server-lakehouse/collect_infra_metrics.py lakehouse_trino >> /home/dataadm/collect-infra-metrics-cron.log 2>&1
+*/5 * * * * /usr/bin/python3 /home/dataadm/repo/deploy/server-lakehouse/collect_access_audit.py lakehouse_trino >> /home/dataadm/collect-access-audit-cron.log 2>&1
+```
+
+`collect_access_audit.py` (sessão SSH + comando executado, "quem entrou,
+quanto tempo ficou, o que rodou") depende de configuração de servidor que
+**não é código versionável** — precisa ser feita manualmente uma vez em
+qualquer novo servidor:
+
+1. **Instalar auditd:** `sudo apt-get install -y auditd audispd-plugins`.
+2. **Regra de auditoria de comando**, focada em sessão interativa real
+   (exclui processo interno de container/cron via filtro de `auid`):
+   ```bash
+   echo "-a always,exit -F arch=b64 -S execve -F auid!=4294967295 -F auid!=0 -k cmd_exec" \
+     | sudo tee /etc/audit/rules.d/50-cmd-exec.rules
+   sudo augenrules --load && sudo systemctl restart auditd
+   ```
+3. **sudoers dedicado** (o coletor roda como `dataadm`, não root; `ausearch`
+   precisa ler `/var/log/audit/audit.log`):
+   ```bash
+   echo "dataadm ALL=(root) NOPASSWD: /usr/sbin/ausearch" \
+     | sudo tee /etc/sudoers.d/dataadm-ausearch
+   sudo chmod 440 /etc/sudoers.d/dataadm-ausearch
+   ```
+4. **Achado real ao configurar (26/07/2026):** `ausearch` trava
+   indefinidamente sem um terminal controlador — funciona na hora via SSH
+   interativo, mas pendura pra sempre via cron ou qualquer chamada
+   não-interativa. `collect_access_audit.py` já contorna isso internamente
+   (`script -qc "..." /dev/null`, aloca um pseudo-terminal só pra rodar o
+   `ausearch`) — não precisa de nada extra além dos 3 passos acima.
+
+Validado em 26/07/2026: sessão SSH (`iceberg.audit.sessoes_ssh`) e comando
+executado (`iceberg.audit.comandos_executados`) coletados corretamente,
+excluindo ruído de processo interno de container/systemd/cron.

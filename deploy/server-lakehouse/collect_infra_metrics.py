@@ -17,7 +17,8 @@ import sys
 from datetime import datetime, timezone
 
 DEFAULT_TRINO_CONTAINER = "lakehouse_trino"
-CATALOG_SCHEMA = "iceberg.gold"
+# Schema `audit` (não `gold` — separado do modelo dimensional desde 26/07/2026).
+CATALOG_SCHEMA = "iceberg.audit"
 
 DDL_CONTAINERS = f"""
 CREATE TABLE IF NOT EXISTS {CATALOG_SCHEMA}.infra_metricas_containers (

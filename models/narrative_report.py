@@ -1,14 +1,14 @@
 """Componente de IA Generativa — relatório narrativo automático (tarefa 25).
 
-Lê os outputs já gravados pelos Modelos 1 e 2 na Gold
-(`iceberg.gold.score_anomalia_contrato`, `iceberg.gold.previsao_pagamento_orgao`)
+Lê os outputs já gravados pelos Modelos 1 e 2, schema `ml`
+(`iceberg.ml.score_anomalia_contrato`, `iceberg.ml.previsao_pagamento_orgao`)
 via Trino e usa um LLM (API OpenAI, modelo de baixo custo) para escrever um
 relatório narrativo em linguagem acessível — para um gestor público sem
 formação técnica, não para um engenheiro de dados. Não treina nada: só lê o
 que os dois modelos já escoraram/preveram e traduz em texto.
 
 O relatório é gravado em dois lugares:
-  - `iceberg.gold.relatorio_narrativo` (auditoria/histórico, mesmo padrão de
+  - `iceberg.ml.relatorio_narrativo` (auditoria/histórico, mesmo padrão de
     `write_scores`/`write_forecasts` dos outros dois modelos — substitui a
     linha anterior a cada execução, não é incremental).
   - um arquivo Markdown em `NARRATIVE_REPORT_DIR` (default
@@ -34,7 +34,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-REPORT_TABLE = "iceberg.gold.relatorio_narrativo"
+REPORT_TABLE = "iceberg.ml.relatorio_narrativo"
 MODEL_VERSION = "narrative_report_v1"
 
 # Modelo de baixo custo — resumir dado tabular já pronto em texto não exige o
@@ -57,7 +57,7 @@ SELECT
     dc.nome AS credor,
     dm.descricao_modalidade AS modalidade,
     fc.flag_emergency
-FROM iceberg.gold.score_anomalia_contrato s
+FROM iceberg.ml.score_anomalia_contrato s
 JOIN iceberg.gold.fato_contrato fc
     ON fc.id_contrato_origem = s.id_contrato_origem AND fc.ano = s.ano
 LEFT JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
@@ -76,7 +76,7 @@ SELECT
     valor_previsto_p10,
     valor_previsto_p50,
     valor_previsto_p90
-FROM iceberg.gold.previsao_pagamento_orgao
+FROM iceberg.ml.previsao_pagamento_orgao
 ORDER BY valor_previsto_p50 DESC
 LIMIT {top_n}
 """

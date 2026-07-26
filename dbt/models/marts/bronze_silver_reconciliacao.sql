@@ -17,7 +17,9 @@
 -- teste de "bateram exato". O que o teste WARN (assert_reconciliacao_bronze_
 -- silver.sql) verifica é o caso realmente anômalo: Silver MAIOR que a soma de
 -- tudo que a Bronze já validou, ou Silver muito abaixo do que seria plausível.
-{{ config(materialized='table') }}
+-- Schema físico `audit` (não `gold`) desde 26/07/2026 — é telemetria do
+-- próprio pipeline, não parte do modelo dimensional.
+{{ config(materialized='table', schema='audit') }}
 
 with bronze as (
     select fonte, sum(registros) as total_bronze

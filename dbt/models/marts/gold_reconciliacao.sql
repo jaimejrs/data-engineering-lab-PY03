@@ -4,7 +4,10 @@
 -- lendo o código. Agora é uma tabela consultável, com teste WARN em
 -- `dbt/tests/assert_cobertura_gold_minima.sql` quando algum percentual foge
 -- do esperado.
-{{ config(materialized='table') }}
+-- Schema físico `audit` (não `gold`) desde 26/07/2026 — é telemetria do
+-- próprio pipeline (não parte do modelo dimensional), apesar do nome do
+-- modelo (mantido — descreve O QUE ele reconcilia, não onde vive).
+{{ config(materialized='table', schema='audit') }}
 
 with silver_contratos as (
     select count(*) as total from {{ source('silver', 'contratos') }} where id is not null

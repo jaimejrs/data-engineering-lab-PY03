@@ -18,21 +18,32 @@ sources:
       `score_anomalia_contrato` (ver dbt/models/marts/fato_contrato.sql); como
       `fato_contrato` é materialized='table' (recriada a cada build), gravar o
       score aqui em vez de fazer UPDATE direto no fato evita que o build
-      seguinte apague o resultado do modelo.
+      seguinte apague o resultado do modelo. Schema físico `ml` (não `gold`)
+      desde 26/07/2026 — separado do modelo dimensional por propósito (ver
+      docs/03-pendencias-e-melhorias.md).
     database: iceberg
-    schema: gold
+    schema: ml
     tables:
       - name: score_anomalia_contrato
         description: "Score de anomalia (Modelo 1, Isolation Forest) por (id_contrato_origem, ano). Ver models/anomaly_detection.py."
+      - name: previsao_pagamento_orgao
+        description: "Previsão de pagamento por órgão/trimestre (Modelo 2, XGBoost quantile). Ver models/payment_forecast.py."
+      - name: relatorio_narrativo
+        description: "Relatório narrativo gerado por LLM a partir dos scores/previsões dos Modelos 1/2. Ver models/narrative_report.py."
 
   - name: audit
     description: >
       Tabelas de auditoria/observabilidade escritas por código Python fora do
       dbt (DAGs), não pipelines de negócio. `bronze_ingestao` é gravada pela
       task `validate` da DAG 1 (src/reconciliation.py) — item 6 de
-      docs/06-analise-critica.md.
+      docs/06-analise-critica.md. Schema físico `audit` (não `gold`) desde
+      26/07/2026 — separado do modelo dimensional por propósito.
     database: iceberg
-    schema: gold
+    schema: audit
     tables:
       - name: bronze_ingestao
         description: "Contagem de registros validados na Bronze por (fonte, data_extracao). Uma linha por execução da DAG 1; soma por fonte é o total processado até agora."
+      - name: infra_metricas_containers
+        description: "CPU/memória por container, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py."
+      - name: infra_metricas_disco
+        description: "Uso de disco por ponto de montagem do host, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py."

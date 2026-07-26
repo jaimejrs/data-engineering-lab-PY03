@@ -60,7 +60,8 @@ ARTIFACT_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), "artifacts", "xgboost_previsao_pagamentos.joblib"),
 )
 
-FORECAST_TABLE = "iceberg.gold.previsao_pagamento_orgao"
+# Schema `ml` (não `gold` — separado do modelo dimensional desde 26/07/2026).
+FORECAST_TABLE = "iceberg.ml.previsao_pagamento_orgao"
 MODEL_VERSION = "xgboost_quantile_v2_ob"
 MLFLOW_EXPERIMENT = "payment_forecast"
 

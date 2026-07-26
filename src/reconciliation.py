@@ -18,7 +18,8 @@ from src import trino_io
 
 logger = logging.getLogger(__name__)
 
-TABLE = "iceberg.gold.bronze_ingestao"
+# Schema `audit` (não `gold` — separado do modelo dimensional desde 26/07/2026).
+TABLE = "iceberg.audit.bronze_ingestao"
 
 DDL = f"""
     CREATE TABLE IF NOT EXISTS {TABLE} (

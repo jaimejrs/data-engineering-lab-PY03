@@ -126,11 +126,11 @@ class TestWriteReportMetadata:
 
 class TestQueries:
     def test_top_anomalias_query_reads_score_and_fato_contrato(self):
-        assert "iceberg.gold.score_anomalia_contrato" in nr.TOP_ANOMALIAS_QUERY
+        assert "iceberg.ml.score_anomalia_contrato" in nr.TOP_ANOMALIAS_QUERY
         assert "iceberg.gold.fato_contrato" in nr.TOP_ANOMALIAS_QUERY
 
     def test_top_previsoes_query_reads_forecast_table(self):
-        assert "iceberg.gold.previsao_pagamento_orgao" in nr.TOP_PREVISOES_QUERY
+        assert "iceberg.ml.previsao_pagamento_orgao" in nr.TOP_PREVISOES_QUERY
 
 
 class TestRun:

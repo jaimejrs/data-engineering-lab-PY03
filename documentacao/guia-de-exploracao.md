@@ -85,12 +85,14 @@ print(df.shape)
 
 ## 3. Silver e Gold — Iceberg via Trino
 
-Catálogo `iceberg`; schemas `silver` (dado normalizado, deduplicado) e `gold`
-(modelo estrela + tabelas de ML/auditoria). Principais tabelas em `gold`:
-`dim_credor` (SCD2), `dim_orgao`, `dim_modalidade`, `dim_tempo`,
-`fato_contrato`, `fato_empenho`, `fato_ordem_bancaria`,
-`score_anomalia_contrato`, `previsao_pagamento_orgao`,
-`relatorio_narrativo`, `bronze_ingestao`, `gold_reconciliacao`.
+Catálogo `iceberg`; schemas `silver` (dado normalizado, deduplicado), `gold`
+(modelo estrela), `ml` (saída dos modelos de IA) e `audit` (telemetria do
+pipeline) — schemas separados desde 26/07/2026, antes tudo vivia junto em
+`gold`. Principais tabelas: `gold.dim_credor` (SCD2), `gold.dim_orgao`,
+`gold.dim_modalidade`, `gold.dim_tempo`, `gold.fato_contrato`,
+`gold.fato_empenho`, `gold.fato_ordem_bancaria`, `ml.score_anomalia_contrato`,
+`ml.previsao_pagamento_orgao`, `ml.relatorio_narrativo`,
+`audit.bronze_ingestao`, `audit.gold_reconciliacao`.
 
 **CLI Trino (no servidor):**
 ```bash
@@ -104,13 +106,13 @@ trino> SELECT * FROM iceberg.gold."fato_contrato$snapshots";
 
 -- os 10 contratos mais atípicos segundo o Modelo 1:
 trino> SELECT s.id_contrato_origem, s.score_anomalia, f.valor_contrato, o.nome
-       FROM gold.score_anomalia_contrato s
+       FROM iceberg.ml.score_anomalia_contrato s
        JOIN gold.fato_contrato f ON f.id_contrato_origem = s.id_contrato_origem AND f.ano = s.ano
        LEFT JOIN gold.dim_orgao o ON f.sk_orgao = o.sk_orgao
        ORDER BY s.score_anomalia DESC LIMIT 10;
 
 -- o relatório narrativo mais recente, por completo:
-trino> SELECT gerado_em, llm_model, conteudo_markdown FROM gold.relatorio_narrativo;
+trino> SELECT gerado_em, llm_model, conteudo_markdown FROM iceberg.ml.relatorio_narrativo;
 ```
 
 **Python (cliente `trino`, mesmo padrão usado por `src/trino_io.py`):**
@@ -169,7 +171,7 @@ Cada execução da task `gerar_relatorio_narrativo` (DAG 4) grava o relatório
 em dois lugares:
 
 1. **Arquivo Markdown**, pronto pra ler: `models/artifacts/relatorios/relatorio_<timestamp>.md`
-2. **Tabela Trino** (histórico + metadados): `iceberg.gold.relatorio_narrativo`
+2. **Tabela Trino** (histórico + metadados): `iceberg.ml.relatorio_narrativo`
    — colunas `gerado_em`, `llm_model`, `num_contratos_anomalos`,
    `num_orgaos_previstos`, `conteudo_markdown`.
 

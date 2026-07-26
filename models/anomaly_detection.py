@@ -63,12 +63,14 @@ ARTIFACT_PATH = os.environ.get(
 
 MLFLOW_EXPERIMENT = "anomaly_detection"
 
-# Tabela Gold própria do score — não é gravada em `fato_contrato` diretamente:
-# `fato_contrato` é `materialized='table'` no dbt (recriada do zero a cada
-# `dbt build`), então um UPDATE nela seria apagado no build seguinte.
-# `fato_contrato.sql` faz LEFT JOIN nesta tabela (ver dbt/models/sources.yml,
-# source `ml_scores`), então o score aparece automaticamente no próximo build.
-SCORE_TABLE = "iceberg.gold.score_anomalia_contrato"
+# Tabela própria do score, schema `ml` (não `gold` — separado do modelo
+# dimensional desde 26/07/2026) — não é gravada em `fato_contrato`
+# diretamente: `fato_contrato` é `materialized='table'` no dbt (recriada do
+# zero a cada `dbt build`), então um UPDATE nela seria apagado no build
+# seguinte. `fato_contrato.sql` faz LEFT JOIN nesta tabela (ver
+# dbt/models/sources.yml, source `ml_scores`), então o score aparece
+# automaticamente no próximo build.
+SCORE_TABLE = "iceberg.ml.score_anomalia_contrato"
 MODEL_VERSION = "isolation_forest_v1"
 
 # Categorias mais frequentes de tipo_objeto mantidas isoladas; o resto vira "OUTROS"

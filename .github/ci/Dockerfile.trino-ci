@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=datalab-trino:local
+FROM ${BASE_IMAGE}
+COPY core-site-ci.xml /etc/trino/hadoop/core-site.xml

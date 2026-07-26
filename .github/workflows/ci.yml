@@ -77,3 +77,83 @@ jobs:
         env:
           DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
         run: dbt parse
+
+  dbt-integration:
+    name: dbt build (Trino+Iceberg+HMS real, dado sintético mínimo)
+    runs-on: ubuntu-latest
+    # Achado (26/07/2026, análise crítica): o job `dbt` acima só faz `dbt
+    # parse` — nunca conecta no Trino, então nenhum teste (not_null, unique,
+    # relationships, os testes singulares assert_*.sql) jamais rodou de
+    # verdade em CI, só manualmente contra produção. Este job sobe uma stack
+    # Trino+Iceberg+Hive Metastore real, mas sem HDFS (warehouse em disco
+    # local, file://) — validado interativamente contra o servidor de
+    # produção antes de escrever este workflow (ver histórico da sessão).
+    # Objetivo é pegar regressão de SQL/lógica (coluna errada, join quebrado,
+    # teste com erro de sintaxe), não validar volume/qualidade de produção —
+    # isso continua sendo responsabilidade da rotina manual (ver
+    # docs/03-pendencias-e-melhorias.md).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Builda as imagens base (mesmas do servidor, HDFS_HOST é ignorado depois)
+        run: |
+          docker build -t datalab-hive-metastore:local ./docker/hive \
+            --build-arg HDFS_HOST=localhost --build-arg METASTORE_DB_HOST=postgres
+          docker build -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost
+
+      - name: Builda as imagens CI (warehouse file:// em vez de hdfs://)
+        run: |
+          docker build -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci
+          docker build -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci
+
+      - name: Sobe rede/volume isolados
+        run: |
+          docker network create ci_net
+          docker volume create ci_warehouse
+
+      - name: Sobe Postgres (backing store do metastore)
+        run: |
+          docker run -d --name postgres --network ci_net \
+            -e POSTGRES_USER=hive -e POSTGRES_PASSWORD=hive -e POSTGRES_DB=metastore postgres:15
+          sleep 8
+
+      - name: Sobe Hive Metastore
+        run: |
+          docker run -d --name hive-metastore --network ci_net -v ci_warehouse:/warehouse hive-metastore-ci:local
+          sleep 20
+          docker logs hive-metastore --tail 30
+
+      - name: Sobe Trino (porta publicada — dbt roda no runner, não em container)
+        run: |
+          docker run -d --name trino --network ci_net -p 8080:8080 -v ci_warehouse:/warehouse trino-ci:local
+          for i in $(seq 1 20); do
+            status=$(docker inspect trino --format '{{.State.Health.Status}}' 2>/dev/null || echo starting)
+            [ "$status" = "healthy" ] && break
+            sleep 5
+          done
+          docker logs trino --tail 30
+
+      - name: Corrige permissão do warehouse (trino roda como uid 1000, volume nasce root)
+        run: docker exec --user root trino chmod -R 777 /warehouse
+
+      - name: Popula dado sintético mínimo (Silver + tabelas de ml/audit)
+        run: docker exec trino trino --execute "$(cat .github/ci/dbt-seed.sql)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instala dbt-trino
+        run: pip install "dbt-trino==1.8.4"
+
+      - name: dbt build (real — models, snapshot, todos os testes)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          DBT_TRINO_HOST: localhost
+        run: dbt build
+
+      - name: Logs do Trino/HMS em caso de falha
+        if: failure()
+        run: |
+          docker logs trino --tail 100 || true
+          docker logs hive-metastore --tail 100 || true

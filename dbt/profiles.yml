@@ -1,5 +1,9 @@
 # Perfil dbt-trino. Sem autenticação (lab). Escreve a Gold no catálogo `iceberg`,
 # schema `gold`; as sources apontam para `iceberg.silver` (ver models/sources.yml).
+# host/port com env_var (default = produção/local, `trino`:8080) — só o job
+# dbt-integration do CI sobrescreve pra `localhost` via DBT_TRINO_HOST
+# (dbt roda no runner, não em container; Trino sobe com porta publicada;
+# ver .github/workflows/ci.yml e .github/ci/).
 ceara_lakehouse:
   target: dev
   outputs:
@@ -7,8 +11,8 @@ ceara_lakehouse:
       type: trino
       method: none
       user: dbt
-      host: trino
-      port: 8080
+      host: "{{ env_var('DBT_TRINO_HOST', 'trino') }}"
+      port: "{{ env_var('DBT_TRINO_PORT', '8080') | as_number }}"
       http_scheme: http
       catalog: iceberg
       schema: gold

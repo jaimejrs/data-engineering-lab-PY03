@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!-- Config do Trino só pro job dbt-integration do CI — warehouse em disco
+     local (file://) em vez de HDFS, mesma lógica de hive-site-ci.xml. -->
+<configuration>
+  <property>
+    <name>fs.defaultFS</name>
+    <value>file:///</value>
+  </property>
+</configuration>

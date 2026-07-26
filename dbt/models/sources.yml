@@ -7,9 +7,31 @@ sources:
     schema: silver
     tables:
       - name: empenhos
+        description: "Chave de negócio composta (id, ano) — id sozinho se repete entre anos, sem PK real na origem."
+        columns:
+          - name: id
+            tests: [not_null]
+          - name: ano
+            tests: [not_null]
       - name: ordem_bancaria_orcamentaria
+        description: "Chave de negócio composta (id, ano) — mesma lógica de empenhos."
+        columns:
+          - name: id
+            tests: [not_null]
+          - name: ano
+            tests: [not_null]
       - name: unidade_gestora
+        description: "Chave de negócio composta (codigo, ano) — snapshot anual por unidade gestora."
+        columns:
+          - name: codigo
+            tests: [not_null]
+          - name: ano
+            tests: [not_null]
       - name: contratos
+        description: "Chave de negócio: id (único, sem composição com ano)."
+        columns:
+          - name: id
+            tests: [not_null, unique]
 
   - name: ml_scores
     description: >
@@ -26,10 +48,25 @@ sources:
     tables:
       - name: score_anomalia_contrato
         description: "Score de anomalia (Modelo 1, Isolation Forest) por (id_contrato_origem, ano). Ver models/anomaly_detection.py."
+        columns:
+          - name: id_contrato_origem
+            tests: [not_null]
+          - name: ano
+            tests: [not_null]
       - name: previsao_pagamento_orgao
         description: "Previsão de pagamento por órgão/trimestre (Modelo 2, XGBoost quantile). Ver models/payment_forecast.py."
+        columns:
+          - name: codigo_orgao
+            tests: [not_null]
+          - name: ano_previsto
+            tests: [not_null]
+          - name: trimestre_previsto
+            tests: [not_null]
       - name: relatorio_narrativo
         description: "Relatório narrativo gerado por LLM a partir dos scores/previsões dos Modelos 1/2. Ver models/narrative_report.py."
+        columns:
+          - name: gerado_em
+            tests: [not_null]
 
   - name: audit
     description: >
@@ -42,8 +79,29 @@ sources:
     schema: audit
     tables:
       - name: bronze_ingestao
-        description: "Contagem de registros validados na Bronze por (fonte, data_extracao). Uma linha por execução da DAG 1; soma por fonte é o total processado até agora."
+        description: "Contagem de registros validados na Bronze por (fonte, data_extracao). Uma linha por execução da DAG 1; soma por fonte é o total processado até agora. Chave de negócio composta (fonte, data_extracao)."
+        columns:
+          - name: fonte
+            tests: [not_null]
+          - name: data_extracao
+            tests: [not_null]
       - name: infra_metricas_containers
-        description: "CPU/memória por container, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py."
+        description: "CPU/memória por container, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py. Telemetria de série temporal, sem chave de negócio única (múltiplas linhas por container são esperadas)."
+        columns:
+          - name: coletado_em
+            tests: [not_null]
       - name: infra_metricas_disco
-        description: "Uso de disco por ponto de montagem do host, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py."
+        description: "Uso de disco por ponto de montagem do host, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_infra_metrics.py. Telemetria de série temporal, sem chave de negócio única."
+        columns:
+          - name: coletado_em
+            tests: [not_null]
+      - name: sessoes_ssh
+        description: "Login/logout de sessão SSH, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_access_audit.py. Telemetria de evento, sem chave de negócio única."
+        columns:
+          - name: timestamp_evento
+            tests: [not_null]
+      - name: comandos_executados
+        description: "Comando executado por usuário logado, coletado a cada 5min via cron. Ver deploy/server-lakehouse/collect_access_audit.py. Telemetria de evento, sem chave de negócio única."
+        columns:
+          - name: timestamp_evento
+            tests: [not_null]

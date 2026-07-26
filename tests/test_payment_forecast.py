@@ -153,6 +153,22 @@ class TestTrainAndPredict:
         assert (preds["p10"] <= preds["p50"]).all()
         assert (preds["p50"] <= preds["p90"]).all()
 
+    def test_quantile_predictions_are_never_negative(self):
+        # Achado da análise crítica de 26/07/2026: para órgão com histórico
+        # baixo/perto de zero, a regressão por quantil pode extrapolar abaixo
+        # de zero — previsão de pagamento negativa não faz sentido.
+        panel = pf.build_quarterly_panel(_pagamentos_df(orgaos=("A", "B")), _contratos_df(orgaos=("A", "B")))
+        X = pf.build_feature_matrix(panel)
+        y = panel.loc[X.index, "target_proximo_trimestre"]
+        train_idx = X.index[y.notna()]
+
+        models = pf.train_models(X.loc[train_idx], y.loc[train_idx])
+        preds = pf.predict_quantiles(models, X.loc[train_idx])
+
+        assert (preds["p10"] >= 0).all()
+        assert (preds["p50"] >= 0).all()
+        assert (preds["p90"] >= 0).all()
+
     def test_forecast_next_quarter_targets_last_known_row_per_org(self):
         panel = pf.build_quarterly_panel(_pagamentos_df(orgaos=("A", "B")), _contratos_df(orgaos=("A", "B")))
         X = pf.build_feature_matrix(panel)

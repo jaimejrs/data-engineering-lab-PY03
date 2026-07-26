@@ -44,6 +44,8 @@ models:
         tests: [not_null]
       - name: ano
         tests: [not_null]
+      - name: num_spu
+        description: "Chave p/ ligar (best-effort) com cod_contrato de fato_empenho/fato_ordem_bancaria — ~7-8% de match real, sem FK obrigatória."
       - name: sk_credor
         tests:
           - relationships:

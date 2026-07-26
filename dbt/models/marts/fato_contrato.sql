@@ -44,6 +44,11 @@ credor_pit as (
 select
     cast(contratos.ano_calc as integer) as ano,
     cast(contratos.id as varchar) as id_contrato_origem,
+    -- Chave p/ ligar (best-effort, ~7-8% de match real — não é FK obrigatória)
+    -- com `cod_contrato` de fato_empenho/fato_ordem_bancaria. Antes só existia
+    -- na Silver; não era propagada até aqui, então esse join não era possível
+    -- na Gold (achado da análise crítica de 26/07/2026).
+    contratos.num_spu,
     cp.sk_credor,
     dorg.sk_orgao,
     dmod.sk_modalidade,

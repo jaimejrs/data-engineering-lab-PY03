@@ -235,6 +235,10 @@ def predict_quantiles(models: dict[float, XGBRegressor], X: pd.DataFrame) -> pd.
     # em algum ponto — comum em regressão por quantil treinada independentemente.
     cols = sorted(out.columns, key=lambda c: int(c[1:]))
     out[cols] = out[cols].cummax(axis=1)
+    # Valor previsto de pagamento não pode ser negativo — para órgão/trimestre
+    # com histórico baixo/perto de zero, a regressão por quantil pode
+    # extrapolar abaixo de zero (achado da análise crítica de 26/07/2026).
+    out[cols] = out[cols].clip(lower=0)
     return out
 
 

@@ -211,6 +211,7 @@ de negócio). Contagens da carga completa (19/07/2026) entre parênteses.
 |---|---|---|---|
 | `sk_fato_contrato`, `ano` | `BIGSERIAL`, `INT` | PK composta (exigência do Postgres p/ tabela particionada) | gerado / ano de `data_assinatura` |
 | `id_contrato_origem` | `VARCHAR` | Chave de negócio p/ recarga idempotente (`UNIQUE` com `ano`) | `contratos.id` |
+| `num_spu` | `VARCHAR` | Chave p/ ligar (best-effort, ~7-8% de match real) com `cod_contrato` de `fato_empenho`/`fato_ordem_bancaria` — sem FK obrigatória. Propagada da Silver a partir de 26/07/2026 (antes só existia lá, então o join não era possível na Gold) | `contratos.num_spu` |
 | `sk_credor`, `sk_orgao`, `sk_modalidade`, `sk_tempo` | `BIGINT` FK | Chaves das dimensões | lookup pelas chaves de negócio |
 | `valor_contrato`, `valor_pago`, `valor_empenhado` | `NUMERIC(15,2)` | Valores financeiros | `contratos.valor_contrato`, `calculated_valor_pago`, `calculated_valor_empenhado` — API já calcula essas duas últimas, preferidas em vez de recalcular via join fraco com `empenhos`/`ordem_bancaria_orcamentaria` |
 | `status` | `VARCHAR` | `descricao_situacao` | `contratos.descricao_situacao` |
@@ -227,7 +228,7 @@ Cobertura real do join: 211/215.402 sem `sk_orgao` (0,1%), 11/215.402 sem `sk_cr
 | `sk_fato_empenho` | `BIGSERIAL` (PK) | Surrogate key | gerado |
 | `id_empenho_origem`, `ano` | `BIGINT`, `INT` | Chave de negócio (`UNIQUE` composta — `empenhos` não tem PK real, `id` sozinho se repete entre anos) | `empenhos.id`, `.ano` |
 | `sk_orgao`, `sk_tempo` | `BIGINT` FK | Chaves das dimensões | lookup por `(codigoug, ano)` → `dim_orgao`, `dataemissao` → `dim_tempo` |
-| `cod_contrato` | `VARCHAR` | Liga com `fato_contrato` (best-effort) | `empenhos.codprocesso` — **atenção:** só ~7,5% de match real contra `contratos.num_spu` (ver README); sem FK obrigatória |
+| `cod_contrato` | `VARCHAR` | Liga com `fato_contrato.num_spu` (best-effort) | `empenhos.codprocesso` — **atenção:** só ~7-8% de match real; sem FK obrigatória. Antes de 26/07/2026 esse join não era possível na Gold (o `num_spu` não chegava até `fato_contrato`) |
 | `valor` | `NUMERIC(15,2)` | Valor do empenho | `empenhos.valor` (confirmado real, `numeric`) |
 | `modalidade` | `VARCHAR` | Classificação | `empenhos.modalidade` (confirmado real, `text`) |
 

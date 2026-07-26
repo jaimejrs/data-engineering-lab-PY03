@@ -2,6 +2,7 @@
 -- fonte da regra de negócio). Silver já normalizou datas e cnpj_cpf/tipo_credor.
 select
     id,
+    num_spu,
     cnpj_cpf_normalizado,
     tipo_credor,
     descricao_nome_credor,

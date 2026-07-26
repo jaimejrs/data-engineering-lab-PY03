@@ -100,6 +100,40 @@ class TestAddPartitions:
         assert row["mes"] == 7
 
 
+class TestTypeColumns:
+    def test_casts_date_field_for_contratos(self, spark):
+        df = spark.createDataFrame([Row(id="1", data_assinatura="2026-07-15")])
+        out = silver_job.type_columns(df, "contratos")
+        row = out.collect()[0]
+        assert str(out.schema["data_assinatura"].dataType) == "DateType()"
+        assert str(row["data_assinatura"]) == "2026-07-15"
+
+    def test_casts_date_field_for_empenhos(self, spark):
+        df = spark.createDataFrame([Row(id="1", dataemissao="2026-07-15", ano=2026)])
+        out = silver_job.type_columns(df, "empenhos")
+        assert str(out.schema["dataemissao"].dataType) == "DateType()"
+
+    def test_casts_monetary_fields_for_contratos(self, spark):
+        df = spark.createDataFrame([Row(id="1", valor_contrato="1200.50", calculated_valor_pago="999.99")])
+        out = silver_job.type_columns(df, "contratos")
+        row = out.collect()[0]
+        assert str(out.schema["valor_contrato"].dataType) == "DecimalType(15,2)"
+        assert float(row["valor_contrato"]) == 1200.50
+        assert float(row["calculated_valor_pago"]) == 999.99
+
+    def test_does_not_touch_monetary_fields_for_other_sources(self, spark):
+        # empenhos/OB já têm `valor` como double (JSON já vem numérico) — não é
+        # campo listado em MONETARY_FIELDS, então type_columns não deve mexer.
+        df = spark.createDataFrame([Row(id="1", dataemissao="2026-07-15", ano=2026, valor=100.0)])
+        out = silver_job.type_columns(df, "empenhos")
+        assert str(out.schema["valor"].dataType) == "DoubleType()"
+
+    def test_unparseable_value_becomes_null_not_error(self, spark):
+        df = spark.createDataFrame([Row(id="1", valor_contrato="não é número")])
+        out = silver_job.type_columns(df, "contratos")
+        assert out.collect()[0]["valor_contrato"] is None
+
+
 class TestDedupBatch:
     def test_removes_duplicates_by_business_key(self, spark):
         df = spark.createDataFrame([Row(id="1", ano=2026), Row(id="1", ano=2026), Row(id="2", ano=2026)])

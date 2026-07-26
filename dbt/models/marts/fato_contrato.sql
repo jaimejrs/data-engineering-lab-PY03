@@ -6,8 +6,7 @@
 with c as (
     select
         *,
-        year(try(cast(substr(data_assinatura, 1, 10) as date))) as ano_calc,
-        try(cast(substr(data_assinatura, 1, 10) as date)) as data_assinatura_date,
+        cast(year(data_assinatura) as integer) as ano_calc,
         row_number() over (partition by id order by data_assinatura desc) as rn
     from {{ ref('stg_contratos') }}
     where id is not null
@@ -30,8 +29,8 @@ credor_pit as (
             partition by contratos.id
             order by
                 case
-                    when contratos.data_assinatura_date >= cast(dc.valido_de as date)
-                        and (dc.valido_ate is null or contratos.data_assinatura_date < cast(dc.valido_ate as date))
+                    when contratos.data_assinatura >= cast(dc.valido_de as date)
+                        and (dc.valido_ate is null or contratos.data_assinatura < cast(dc.valido_ate as date))
                     then 0
                     else 1
                 end,
@@ -42,7 +41,7 @@ credor_pit as (
         on dc.cnpj_cpf = contratos.cnpj_cpf_normalizado
 )
 select
-    cast(contratos.ano_calc as integer) as ano,
+    contratos.ano_calc as ano,
     cast(contratos.id as varchar) as id_contrato_origem,
     -- Chave p/ ligar (best-effort, ~7-8% de match real — não é FK obrigatória)
     -- com `cod_contrato` de fato_empenho/fato_ordem_bancaria. Antes só existia
@@ -53,30 +52,30 @@ select
     dorg.sk_orgao,
     dmod.sk_modalidade,
     dtmp.sk_tempo,
-    try_cast(contratos.valor_contrato as decimal(15, 2)) as valor_contrato,
-    try_cast(contratos.calculated_valor_pago as decimal(15, 2)) as valor_pago,
-    try_cast(contratos.calculated_valor_empenhado as decimal(15, 2)) as valor_empenhado,
+    contratos.valor_contrato,
+    contratos.calculated_valor_pago as valor_pago,
+    contratos.calculated_valor_empenhado as valor_empenhado,
     -- Explica boa parte (~49%) dos casos de valor_pago > valor_contrato —
     -- aditivo contratual não refletido de volta no valor_contrato original.
     -- Também não era propagada até aqui (achado da análise crítica de
     -- 26/07/2026, ver assert_pagamento_dentro_do_contratado.sql).
-    try_cast(contratos.calculated_valor_aditivo as decimal(15, 2)) as valor_aditivo,
-    try_cast(contratos.calculated_valor_ajuste as decimal(15, 2)) as valor_ajuste,
+    contratos.calculated_valor_aditivo as valor_aditivo,
+    contratos.calculated_valor_ajuste as valor_ajuste,
     contratos.descricao_situacao as status,
-    coalesce(try_cast(contratos.emergency as boolean), false) as flag_emergency,
+    coalesce(contratos.emergency, false) as flag_emergency,
     cast(sa.score_anomalia as decimal(5, 4)) as score_anomalia
 from contratos
 left join credor_pit cp
     on cp.contrato_id = contratos.id and cp.rn = 1
 left join {{ ref('dim_orgao') }} dorg
     on dorg.codigo = cast(contratos.cod_gestora as varchar)
-    and dorg.ano = cast(contratos.ano_calc as integer)
+    and dorg.ano = contratos.ano_calc
 left join {{ ref('dim_modalidade') }} dmod
     on dmod.descricao_modalidade = contratos.descricao_modalidade
 left join {{ ref('dim_tempo') }} dtmp
-    on dtmp.data = contratos.data_assinatura_date
+    on dtmp.data = contratos.data_assinatura
 -- Modelo 1 (models/anomaly_detection.py) escreve aqui, fora do dbt — ver
 -- sources.yml (`ml_scores`) para o motivo de não fazer UPDATE direto no fato.
 left join {{ source('ml_scores', 'score_anomalia_contrato') }} sa
     on sa.id_contrato_origem = cast(contratos.id as varchar)
-    and sa.ano = cast(contratos.ano_calc as integer)
+    and sa.ano = contratos.ano_calc

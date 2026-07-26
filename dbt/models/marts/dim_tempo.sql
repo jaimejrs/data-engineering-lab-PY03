@@ -1,15 +1,13 @@
 -- dim_tempo — união das datas de contratos (data_assinatura), empenhos
--- (dataemissao) e ordens bancárias (dataemissao), já ISO na Silver. `try(cast
--- ... as date)` descarta valores não normalizados (ex: as ~120k datas
--- ISO-com-timezone documentadas no dicionário). substr(...,1,10) cobre datas
--- ISO com timezone (ex: contratos '2026-07-21T00:00:00.000-03:00'), ISO puro e
--- o que a Silver já normalizou.
+-- (dataemissao) e ordens bancárias (dataemissao). Já vêm como DATE desde a
+-- Silver (tipagem aplicada em 26/07/2026 — antes vinha como varchar, exigia
+-- try(cast(substr(...))) aqui; ver stacks/apache-iceberg.md).
 with datas as (
-    select try(cast(substr(data_assinatura, 1, 10) as date)) as data from {{ ref('stg_contratos') }}
+    select data_assinatura as data from {{ ref('stg_contratos') }}
     union
-    select try(cast(substr(dataemissao, 1, 10) as date)) from {{ ref('stg_empenhos') }}
+    select dataemissao from {{ ref('stg_empenhos') }}
     union
-    select try(cast(substr(dataemissao, 1, 10) as date)) from {{ ref('stg_ordem_bancaria') }}
+    select dataemissao from {{ ref('stg_ordem_bancaria') }}
 ),
 validas as (
     select distinct data from datas where data is not null

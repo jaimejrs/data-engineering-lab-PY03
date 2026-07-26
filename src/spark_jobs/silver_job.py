@@ -148,6 +148,35 @@ def add_partitions(df, source: str):
     return df
 
 
+MONETARY_FIELDS = {
+    "contratos": (
+        "valor_contrato",
+        "calculated_valor_pago",
+        "calculated_valor_empenhado",
+        "calculated_valor_aditivo",
+        "calculated_valor_ajuste",
+    ),
+}
+
+
+def type_columns(df, source: str):
+    """Tipa data (DATE) e valores monetários (DECIMAL) usados pela Gold, em vez
+    de deixar isso pra `try_cast`/`substr` em runtime no dbt (achado da
+    análise crítica de 26/07/2026) — só os campos hoje consumidos por
+    `dbt/models/marts/*.sql`, não todo campo bruto da fonte. Roda depois de
+    `add_partitions` (que ainda precisa do campo de data como string, via
+    `F.substring`) e antes de `dedup_batch`/gravação.
+    """
+    date_field = PARTITION_DATE_FIELD[source]
+    if date_field and date_field in df.columns:
+        df = df.withColumn(date_field, F.to_date(F.col(date_field), "yyyy-MM-dd"))
+
+    for field in MONETARY_FIELDS.get(source, ()):
+        if field in df.columns:
+            df = df.withColumn(field, F.col(field).cast("decimal(15,2)"))
+    return df
+
+
 def dedup_batch(df, source: str):
     """Dedup do lote pela chave de negócio, com desempate determinístico.
 
@@ -239,7 +268,7 @@ def run(run_date: str) -> dict:
             if df is None:
                 summary[source] = 0
                 continue
-            df = dedup_batch(add_partitions(normalize(df, source), source), source)
+            df = dedup_batch(type_columns(add_partitions(normalize(df, source), source), source), source)
             summary[source] = df.count()
             write_source(spark, source, df, run_date)
     finally:

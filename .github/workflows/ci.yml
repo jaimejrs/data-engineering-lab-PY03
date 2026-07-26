@@ -136,8 +136,14 @@ jobs:
       - name: Corrige permissão do warehouse (trino roda como uid 1000, volume nasce root)
         run: docker exec --user root trino chmod -R 777 /warehouse
 
+      - name: Cria os schemas (diretório <schema>.db é criado pelo Hive Metastore, não pelo Trino)
+        run: docker exec trino trino --execute "$(cat .github/ci/dbt-seed-schemas.sql)"
+
+      - name: Corrige permissão de novo (HMS acabou de criar os diretórios de schema como root)
+        run: docker exec --user root trino chmod -R 777 /warehouse
+
       - name: Popula dado sintético mínimo (Silver + tabelas de ml/audit)
-        run: docker exec trino trino --execute "$(cat .github/ci/dbt-seed.sql)"
+        run: docker exec trino trino --execute "$(cat .github/ci/dbt-seed-tables.sql)"
 
       - uses: actions/setup-python@v5
         with:

@@ -1,7 +1,8 @@
--- Dado sintético mínimo pra rodar `dbt build` de verdade no CI (job
--- dbt-integration) contra Trino real — sem isso, dbt build falha na primeira
--- consulta com "table not found", já que os modelos leem de source() e
--- ninguém populou a Silver nesse ambiente descartável.
+-- Passo 2/2 do seed do CI (job dbt-integration) — roda depois do
+-- dbt-seed-schemas.sql e de um novo `chmod -R 777 /warehouse` (ver
+-- .github/workflows/ci.yml). Sem isso, dbt build falha na primeira consulta
+-- com "table not found", já que os modelos leem de source() e ninguém
+-- populou a Silver nesse ambiente descartável.
 --
 -- Uma linha por fonte, com chaves que se conectam entre si (mesmo
 -- codigo/ano/data) — o objetivo NÃO é validar volume/qualidade de produção
@@ -9,11 +10,6 @@
 -- docs/03-pendencias-e-melhorias.md), é garantir que o SQL dos modelos e dos
 -- testes realmente EXECUTA (erro de sintaxe, coluna errada, join quebrado —
 -- coisa que `dbt parse` não pega, porque nunca manda a consulta pro banco).
-
-CREATE SCHEMA IF NOT EXISTS iceberg.silver WITH (location = 'file:///warehouse/silver.db');
-CREATE SCHEMA IF NOT EXISTS iceberg.gold WITH (location = 'file:///warehouse/gold.db');
-CREATE SCHEMA IF NOT EXISTS iceberg.ml WITH (location = 'file:///warehouse/ml.db');
-CREATE SCHEMA IF NOT EXISTS iceberg.audit WITH (location = 'file:///warehouse/audit.db');
 
 CREATE TABLE iceberg.silver.unidade_gestora (
     codigo varchar,

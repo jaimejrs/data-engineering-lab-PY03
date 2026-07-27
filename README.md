@@ -1,11 +1,31 @@
 # Ceará Transparente — Pipeline de Dados (Lakehouse)
 
+<div align="center">
+  <img align="center" src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img align="center" src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img align="center" src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <br><br>
+  <img align="center" src="https://img.shields.io/badge/Apache%20Hadoop%20HDFS-66CC00?style=for-the-badge&logo=apachehadoop&logoColor=white" alt="Hadoop HDFS">
+  <img align="center" src="https://img.shields.io/badge/Apache%20Airflow-017CEE?style=for-the-badge&logo=Apache%20Airflow&logoColor=white" alt="Apache Airflow">
+  <img align="center" src="https://img.shields.io/badge/Apache%20Spark-E25A1C?style=for-the-badge&logo=Apache%20Spark&logoColor=white" alt="Apache Spark">
+  <img align="center" src="https://img.shields.io/badge/Apache%20Iceberg-008D9C?style=for-the-badge&logo=apache&logoColor=white" alt="Apache Iceberg">
+  <img align="center" src="https://img.shields.io/badge/Hive%20Metastore-FDEE21?style=for-the-badge&logo=apachehive&logoColor=black" alt="Hive Metastore">
+  <br><br>
+  <img align="center" src="https://img.shields.io/badge/Trino-DD00A1?style=for-the-badge&logo=trino&logoColor=white" alt="Trino">
+  <img align="center" src="https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white" alt="dbt">
+  <img align="center" src="https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white" alt="Jupyter">
+  <img align="center" src="https://img.shields.io/badge/MLflow-0194E2?style=for-the-badge&logo=mlflow&logoColor=white" alt="MLflow">
+  <img align="center" src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI">
+</div>
+<br>
+
 Pipeline de dados de **transparência pública do Ceará** (contratos + empenhos), em
 arquitetura **medalhão (Bronze → Silver → Gold)** que evoluiu de um *data lake* para um
 **lakehouse**: Silver e Gold são tabelas **Apache Iceberg** sobre HDFS, com um catálogo
 único (**Hive Metastore**) compartilhado por **Spark** (escrita da Silver) e **Trino**
 (transformação/serving da Gold via **dbt**), orquestrados de ponta a ponta pelo
 **Airflow**.
+
 
 `Fases 1, 2 e 3 concluídas de ponta a ponta (Bronze → Silver → Gold → ML/IA, automáticas)` · Última atualização: 25/07/2026
 

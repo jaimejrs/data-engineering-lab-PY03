@@ -3,8 +3,16 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # Pula CI quando só documentação muda — commit doc-only não roda o
+    # pipeline inteiro (~2min do job dbt-integration incluído). Só entra em
+    # efeito se TODOS os arquivos do push forem .md; qualquer mudança de
+    # código no mesmo commit já dispara CI normalmente.
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 # Nenhum job escreve no repositório/PR — leitura só.

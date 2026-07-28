@@ -1,0 +1,16 @@
+# Ver .gitattributes para normalização de fim de linha no Git — isto aqui
+# só orienta o editor local (indentação/charset), não afeta o conteúdo commitado.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{py,sh,sql,yml,yaml,xml,html}]
+indent_style = space
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

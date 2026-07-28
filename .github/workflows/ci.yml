@@ -212,3 +212,41 @@ jobs:
         run: |
           docker logs trino --tail 100 || true
           docker logs hive-metastore --tail 100 || true
+
+  deploy:
+    name: Deploy (SSH via Tailscale, só após CI verde em push na main)
+    runs-on: ubuntu-latest
+    needs: [lint, tests, spark-tests, dbt, dbt-integration]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    timeout-minutes: 10
+    # Push-based, decisão explícita de 28/07/2026 (ver stacks/github-actions-cicd.md):
+    # o projeto já tinha CD pull-based (auto-sync.py via cron, a cada 15min no
+    # servidor, só aplica se a Checks API mostrar CI verde pro commit) —
+    # escolhido de propósito pra NUNCA guardar chave SSH em secret do GitHub
+    # (ver docstring de deploy/server-lakehouse/auto-sync.py). Aqui trocamos
+    # esse trade-off conscientemente por deploy quase instantâneo (segundos,
+    # não até 15min) — mitigado por: (1) chave SSH dedicada só a isso, nunca
+    # usada por humano; (2) restrita no servidor via `command=` forçado em
+    # authorized_keys — mesmo que a chave vaze, só roda
+    # gh-actions-deploy.sh, nenhum outro comando; (3) `needs:` acima garante
+    # que só chega aqui depois dos 5 jobs de CI passarem de verdade.
+    # auto-sync.py continua rodando (rede de segurança caso este job falhe).
+    steps:
+      - name: Conecta na tailnet (servidor só é alcançável via Tailscale)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configura a chave de deploy (dedicada, restrita no servidor)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Roda o deploy no servidor (sync-from-git.sh --apply + healthcheck)
+        # O comando abaixo é ignorado pelo servidor — authorized_keys força
+        # a rodar sempre ~/gh-actions-deploy.sh, não importa o que mandarmos.
+        run: ssh -i ~/.ssh/deploy_key dataadm@100.69.31.14 "deploy via github actions"

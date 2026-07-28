@@ -16,6 +16,15 @@
   <img align="center" src="https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white" alt="Jupyter">
   <img align="center" src="https://img.shields.io/badge/MLflow-0194E2?style=for-the-badge&logo=mlflow&logoColor=white" alt="MLflow">
   <img align="center" src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI">
+  <img align="center" src="https://img.shields.io/badge/Apache%20Superset-20A6C9?style=for-the-badge&logo=apachesuperset&logoColor=white" alt="Apache Superset">
+  <img align="center" src="https://img.shields.io/badge/GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="GitHub Actions">
+</div>
+<br>
+
+<div align="center">
+  <a href="https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml">
+    <img src="https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml/badge.svg" alt="CI/CD status">
+  </a>
 </div>
 <br>
 
@@ -24,10 +33,13 @@ arquitetura **medalhão (Bronze → Silver → Gold)** que evoluiu de um *data l
 **lakehouse**: Silver e Gold são tabelas **Apache Iceberg** sobre HDFS, com um catálogo
 único (**Hive Metastore**) compartilhado por **Spark** (escrita da Silver) e **Trino**
 (transformação/serving da Gold via **dbt**), orquestrados de ponta a ponta pelo
-**Airflow**.
+**Airflow**. O warehouse Iceberg é fisicamente separado por propósito — schemas
+`gold` (dimensional, consumo), `ml` (scores/previsões dos modelos) e `audit`
+(reconciliação, observabilidade de infra e auditoria de acesso) — e todo o
+ciclo é validado automaticamente por **CI/CD** (GitHub Actions) a cada push.
 
 
-`Fases 1, 2 e 3 concluídas de ponta a ponta (Bronze → Silver → Gold → ML/IA, automáticas)` · Última atualização: 25/07/2026
+`Fases 1, 2 e 3 concluídas de ponta a ponta (Bronze → Silver → Gold → ML/IA, automáticas)` · Última atualização: 28/07/2026
 
 > Diagrama completo de arquitetura (fluxo de dados, orquestração e infraestrutura):
 > [`documentacao/diagrama-arquitetura.md`](documentacao/diagrama-arquitetura.md).
@@ -65,9 +77,9 @@ flowchart LR
     G -->|SQL / BI| TRINO["Trino (serving :8085)"]
 ```
 
-As três DAGs rodam **encadeadas por Dataset** (não por horário fixo) e disparam
-sozinhas todos os dias — a cadeia completa `bronze → silver → gold` foi validada
-rodando sem intervenção manual. Detalhes de arquitetura e das decisões técnicas em
+As quatro DAGs rodam **encadeadas por Dataset** (não por horário fixo) e disparam
+sozinhas todos os dias — a cadeia completa `bronze → silver → gold → ml_inference` foi
+validada rodando sem intervenção manual. Detalhes de arquitetura e das decisões técnicas em
 [`documentacao/lakehouse-spark-iceberg.md`](documentacao/lakehouse-spark-iceberg.md) e
 [`documentacao/gold-dbt-trino.md`](documentacao/gold-dbt-trino.md).
 
@@ -78,11 +90,15 @@ rodando sem intervenção manual. Detalhes de arquitetura e das decisões técni
 | **Bronze** | JSON bruto | Python (`src/extractors`) via WebHDFS | HDFS `/bronze` | zona raw imutável; particionada `ano=/mes=/data_extracao=` |
 | **Silver** | **Iceberg** (Parquet) | **PySpark** (`src/spark_jobs/silver_job.py`) | HDFS `/warehouse/silver.db` | normalização + dedup **entre execuções** via `MERGE INTO` |
 | **Gold** | **Iceberg** (Parquet) | **Trino** via **dbt** (`dbt/`) | HDFS `/warehouse/gold.db` | modelo estrela declarativo + testes dbt |
+| **ml** / **audit** | **Iceberg** (Parquet) | Python (`models/`, coletores em `deploy/server-lakehouse/`) + dbt (reconciliação) | HDFS `/warehouse/{ml,audit}.db` | schemas físicos próprios (26/07/2026) — scores/previsões de ML separados de reconciliação, métricas de infra e auditoria de acesso, mesmo catálogo `iceberg` |
 
-**Volumes reais validados (24/07/2026):** `empenhos` 1.376.379 · `ordem_bancaria_orcamentaria`
-1.399.810 · `contratos` 215.402 · `unidade_gestora` 5.011 na Silver; na Gold, `fato_empenho`
-1.376.379 · `fato_contrato` 215.518 · `dim_credor` 10.612 (**SCD2**) · `dim_orgao` 5.011 ·
-`dim_tempo` 1.579 · `dim_modalidade` 21 (**32/32 nós dbt PASS**).
+**Volumes reais validados (28/07/2026, consulta direta via Trino):** `empenhos` 1.376.379 ·
+`ordem_bancaria_orcamentaria` 1.399.810 · `contratos` 216.358 · `unidade_gestora` 5.011 na
+Silver; na Gold, `fato_empenho` 1.376.379 · `fato_contrato` 216.358 · `fato_ordem_bancaria`
+1.399.810 · `dim_credor` 10.637 (**SCD2**) · `dim_orgao` 5.011 · `dim_tempo` 1.584 ·
+`dim_modalidade` 21. Testes dbt: fontes (Silver/ml/audit) com `not_null`/`unique` nas chaves
+de negócio + 5 testes singulares de chave composta, todos rodando de verdade em CI a cada
+push (ver seção "CI/CD" abaixo) — não só validados manualmente.
 
 ## Estrutura de diretórios
 
@@ -100,8 +116,12 @@ rodando sem intervenção manual. Detalhes de arquitetura e das decisões técni
 │   ├── spark_jobs/               # Silver real do lakehouse — Bronze -> Iceberg (MERGE INTO)
 │   └── validators/              # validação de schema/completude da Bronze
 ├── dbt/                          # Gold declarativa — staging -> dims -> fatos + testes (dbt-trino)
-├── docker/                       # Dockerfiles do stack (airflow, spark, hive, trino)
+├── docker/                       # Dockerfiles do stack (airflow, spark, hive, trino, superset)
 ├── deploy/server-lakehouse/      # overlay aditivo do lakehouse no servidor real do time
+│   │                             #   (auto-sync.py: deploy pull-based via cron + Checks API;
+│   │                             #   maintenance.sh: compaction/expiração/retenção do Iceberg;
+│   │                             #   collect_infra_metrics.py / collect_access_audit.py: schema audit)
+├── .github/workflows/ci.yml      # CI (5 jobs) + CD (deploy via SSH/Tailscale) — ver seção "CI/CD"
 ├── documentacao/                 # documentação técnica de entrega (arquitetura, dicionário de dados)
 ├── notebooks/                    # exploração de ingestão + EDA Bronze/Silver/Gold + treino/avaliação ML
 ├── models/                       # Fase 3 (ML/IA) — Modelo 1 (anomaly_detection.py) e Modelo 2 (payment_forecast.py)
@@ -163,6 +183,33 @@ manuais pesados** (validado processando os 1,38M de empenhos do histórico compl
 > para o diagrama completo de orquestração/infraestrutura e
 > `docs/06-analise-critica.md` para os bugs reais encontrados rodando contra
 > produção (itens 13 e 15).
+
+## CI/CD
+
+[![CI/CD status](https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml/badge.svg)](https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml)
+
+Todo push roda `.github/workflows/ci.yml` — **5 jobs de CI** em paralelo (lint/formatação
+via `ruff`, testes unitários, Spark local + Iceberg validando o `MERGE INTO`, `dbt parse`,
+e `dbt build` real contra um Trino + Iceberg + Hive Metastore efêmero em Docker, sem HDFS)
+— seguidos, só em push na `main` e só se os 5 passarem, de um **job de deploy (CD)**: entra
+na rede privada do servidor via Tailscale e aplica o código real por SSH (chave dedicada,
+restrita no servidor a rodar só o script de deploy). Existe também uma segunda camada de
+CD, mais simples e independente — `auto-sync.py` via cron no servidor, a cada 15min, que só
+aplica se a Checks API do GitHub mostrar CI verde — como rede de segurança caso o job do
+GitHub Actions falhe. Detalhes de cada job, decisões de design e o porquê de cada trade-off
+em [`stacks/github-actions-cicd.md`](stacks/github-actions-cicd.md) (interno).
+
+## Observabilidade e auditoria
+
+Painéis operacionais em **Apache Superset** (`docker/superset/`) cobrindo saúde do próprio
+pipeline — cargas e qualidade Bronze→Silver→Gold, execuções do Airflow (sucesso/falha por
+DAG e task), métricas de infraestrutura (CPU/memória/disco por container) e auditoria de
+acesso (sessões SSH e comandos executados, inclusive via `sudo`) — coletadas a cada 5min por
+scripts em `deploy/server-lakehouse/` e gravadas como tabelas Iceberg no schema `audit`.
+Existe porque múltiplas pessoas do time compartilham acesso à mesma infraestrutura de
+produção — dá para responder "quem fez o quê" sem vasculhar log manualmente. Retenção de
+dado sensível (IP, comando completo) limitada via `maintenance.sh` (`AUDIT_RETENTION_DAYS`,
+padrão 90 dias), que também cuida de compaction e expiração de snapshot do Iceberg.
 
 ## Configuração
 
@@ -366,14 +413,16 @@ histórico completo carregado e validado (ver seção "Camadas" acima).
 |---|---|
 | Bronze — extração API + Postgres, watermark com lookback, validação | ✅ Concluída |
 | Silver — Iceberg via Spark, `MERGE INTO`, cast de tipo | ✅ Concluída |
-| Gold — modelo estrela dbt-trino, SCD2, 32/32 testes | ✅ Concluída |
+| Gold — modelo estrela dbt-trino (inclui `fato_ordem_bancaria`), SCD2, testes automatizados | ✅ Concluída |
 | Orquestração — 4 DAGs encadeadas por Dataset (Bronze→Silver→Gold→ML) | ✅ 4/4 validadas em produção |
 | Fase 3 — ML/IA — Modelo 1 (anomalia) + Modelo 2 (previsão) | ✅ Treinados, avaliados e rodando em produção via DAG 4 |
 | Fase 3 — ML/IA — componente de IA generativa (relatório narrativo) | ✅ Gerando relatórios em produção via DAG 4 |
+| Observabilidade — Superset (painéis operacionais) + schema `audit` (infra/acesso) | ✅ Em produção, coleta a cada 5min |
+| CI/CD — 5 jobs de CI (lint/testes/Spark/dbt real) + deploy automatizado | ✅ Rodando a cada push (ver seção "CI/CD") |
 
 Pendências conhecidas e assumidas conscientemente (reconciliação entre camadas,
-`ordem_bancaria_orcamentaria` sem modelo Gold, segurança lab-grade, SPOF do HDFS) estão
-documentadas na pasta interna do time (`docs/`, não versionada).
+segurança lab-grade, SPOF do HDFS) estão documentadas na pasta interna do time
+(`docs/`, não versionada — ver `docs/03-pendencias-e-melhorias.md`).
 
 
 ---

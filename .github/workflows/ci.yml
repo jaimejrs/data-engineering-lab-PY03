@@ -120,26 +120,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Builda as imagens base (mesmas do servidor, HDFS_HOST é ignorado depois) — com cache de camada (GHA)
+      # Achado (28/07/2026): tentei cache de camada via buildx+GHA
+      # (--cache-from/--cache-to type=gha) nas imagens base. Medido em 2 runs
+      # reais: piorou (88s vs 30s pras mesmas 2 imagens) — o builder do
+      # buildx (driver docker-container) roda isolado do image store do
+      # daemon, então tem que baixar a imagem base apache/hive:4.0.0 (~688MB)
+      # do zero em toda run mesmo com cache de camada ativo (o cache do GHA
+      # não cobre o pull da imagem base, só as camadas construídas em cima
+      # dela). Revertido pra `docker build` simples — mais rápido aqui.
+      - name: Builda as imagens base (mesmas do servidor, HDFS_HOST é ignorado depois)
         run: |
-          docker buildx build --load -t datalab-hive-metastore:local ./docker/hive \
-            --build-arg HDFS_HOST=localhost --build-arg METASTORE_DB_HOST=postgres \
-            --cache-from type=gha,scope=hive-base --cache-to type=gha,mode=max,scope=hive-base
-          docker buildx build --load -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost \
-            --cache-from type=gha,scope=trino-base --cache-to type=gha,mode=max,scope=trino-base
+          docker build -t datalab-hive-metastore:local ./docker/hive \
+            --build-arg HDFS_HOST=localhost --build-arg METASTORE_DB_HOST=postgres
+          docker build -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost
 
       - name: Builda as imagens CI (warehouse file:// em vez de hdfs://)
-        # Sem buildx aqui de propósito: o builder do buildx (driver
-        # docker-container, usado p/ suportar --cache-to type=gha acima) não
-        # enxerga o image store local do daemon — como este FROM referencia
-        # datalab-hive-metastore:local/datalab-trino:local (imagens só locais,
-        # sem registry), buildx tentava fazer PULL delas e falhava com "pull
-        # access denied". `docker build` normal usa o driver padrão, que
-        # compartilha o image store do daemon — funciona direto. Camada
-        # trivial (1 COPY) sobre uma base que já muda a cada run mesmo, cache
-        # não traria ganho aqui de qualquer forma.
         run: |
           docker build -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci
           docker build -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci

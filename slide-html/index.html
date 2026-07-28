@@ -250,6 +250,73 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Stacks">
+      <div class="eyebrow">03 — Stacks · Ferramentas Utilizadas</div>
+      <h1>Cada ferramenta resolve um problema real</h1>
+      <div class="slide-body">
+        <p style="margin-bottom:1rem">
+          <span class="tag bronze">Fontes (API + Postgres)</span> →
+          <span class="tag bronze">Bronze — HDFS</span> →
+          <span class="tag silver">Silver — Spark + Iceberg</span> →
+          <span class="tag gold">Gold — dbt + Trino</span> →
+          <span class="tag teal">Consumo — Superset · Streamlit · notebooks</span>
+        </p>
+        <div class="grid cols-4" style="gap:.9rem">
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">HDFS</h3>
+            <p style="font-size:.82rem">Storage do Bronze e do warehouse Iceberg.
+            Não trocamos por S3/MinIO: já existia na infra do curso, on-premise.
+            <span class="mono" style="display:block;margin-top:.3rem;opacity:.8">hdfs://hadoop:9000</span></p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Spark</h3>
+            <p style="font-size:.82rem">Processa Bronze → Silver
+            (<code>MERGE INTO</code> Iceberg). Preferido a Trino/DuckDB aqui
+            por ter <strong>MERGE</strong> e escrita Iceberg de 1ª classe.</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Apache Iceberg</h3>
+            <p style="font-size:.82rem">Formato ACID da Silver/Gold — snapshots,
+            time travel. Preferido a Delta Lake por ser <strong>multi-engine
+            aberto</strong>: Spark e Trino leem/escrevem as mesmas tabelas.</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Hive Metastore</h3>
+            <p style="font-size:.82rem">Catálogo único — o que faz Spark e
+            Trino enxergarem as mesmas tabelas. Backing store no Postgres
+            (DB <code>metastore</code>).</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Trino</h3>
+            <p style="font-size:.82rem">Escreve a Gold (via dbt) e serve
+            consulta pra BI/notebooks/Superset. Preferido a Spark SQL aqui
+            por ser <strong>SQL interativo</strong> com federação nativa
+            (Iceberg + Postgres num só <code>SELECT</code>).</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">dbt</h3>
+            <p style="font-size:.82rem">Constrói a Gold de forma declarativa:
+            staging → dims → fatos + testes + lineage. Preferido a SQL/Python
+            imperativo por versionar <strong>regra de negócio testada</strong>,
+            não só código de ETL.</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Airflow</h3>
+            <p style="font-size:.82rem">Orquestra as 4 DAGs — por
+            <strong>Dataset</strong>, não horário fixo (a próxima só dispara
+            quando a anterior realmente termina). Padrão de mercado, maior
+            ecossistema de operators.</p>
+          </div>
+          <div class="card" style="padding:.9rem 1rem">
+            <h3 style="font-size:.92rem">Docker / Compose</h3>
+            <p style="font-size:.82rem">Empacota e reproduz o stack inteiro —
+            local e no servidor. Preferido a Kubernetes aqui pelo
+            <strong>escopo</strong>: time pequeno, um comando sobe tudo.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

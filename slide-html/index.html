@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ceará Transparente — Pipeline de Dados e IA</title>
+<style>
+  :root {
+    --bronze: #c9884f;
+    --silver: #b9c1cb;
+    --gold: #e8b923;
+    --teal: #3fb8af;
+    --bg: #12151b;
+    --bg-raised: #1a1e26;
+    --ink: #eef1f5;
+    --ink-dim: #9aa3b2;
+    --rule: #2a2f3a;
+    --font-body: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-head: "Segoe UI Semibold", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5f7;
+    --bg-raised: #ffffff;
+    --ink: #1a1e26;
+    --ink-dim: #5b6472;
+    --rule: #dde1e7;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7;
+      --bg-raised: #ffffff;
+      --ink: #1a1e26;
+      --ink-dim: #5b6472;
+      --rule: #dde1e7;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font-body);
+    overflow: hidden;
+  }
+  body.print-mode { overflow: visible; }
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(2rem, 6vw, 6rem) clamp(2rem, 8vw, 9rem);
+    opacity: 0; transform: translateY(24px);
+    transition: opacity .5s ease, transform .5s ease;
+    pointer-events: none;
+  }
+  .slide.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .eyebrow {
+    font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .14em;
+    font-size: .8rem; color: var(--gold); margin-bottom: .9rem;
+  }
+  .slide h1 {
+    font-family: var(--font-head); font-weight: 700;
+    font-size: clamp(1.8rem, 4.4vw, 3.4rem); line-height: 1.08; margin: 0 0 1.1rem;
+    text-wrap: balance;
+  }
+  .slide h2 {
+    font-family: var(--font-head); font-weight: 600;
+    font-size: clamp(1.1rem, 1.8vw, 1.5rem); color: var(--ink);
+    margin: 1.6rem 0 .6rem;
+  }
+  .slide p, .slide li { font-size: clamp(.95rem, 1.25vw, 1.15rem); line-height: 1.55; color: var(--ink-dim); }
+  .slide strong { color: var(--ink); font-weight: 600; }
+  .slide-body { max-width: 1100px; }
+  .rule { height: 1px; background: var(--rule); margin: 1.4rem 0; border: none; }
+  code, .mono { font-family: var(--font-mono); font-size: .92em; }
+  .tag {
+    display: inline-block; font-family: var(--font-mono); font-size: .78rem;
+    padding: .18rem .55rem; border-radius: 999px; border: 1px solid var(--rule);
+    color: var(--ink-dim); margin: .15rem .3rem .15rem 0;
+  }
+  .tag.bronze { border-color: var(--bronze); color: var(--bronze); }
+  .tag.silver { border-color: var(--silver); color: var(--silver); }
+  .tag.gold   { border-color: var(--gold); color: var(--gold); }
+  .tag.teal   { border-color: var(--teal); color: var(--teal); }
+  .grid { display: grid; gap: 1.4rem; }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .card {
+    background: var(--bg-raised); border: 1px solid var(--rule); border-radius: 14px;
+    padding: 1.3rem 1.4rem;
+  }
+  .card h3 {
+    font-family: var(--font-head); font-size: 1.02rem; margin: 0 0 .5rem; color: var(--ink);
+  }
+  .stat { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stat.big { font-size: clamp(1.6rem, 3vw, 2.4rem); color: var(--gold); display:block; margin-bottom:.2rem; }
+  .kicker-num { color: var(--teal); }
+
+  /* Navegação */
+  .nav-ui { position: fixed; inset: auto 0 0 0; z-index: 20; }
+  .progress-bar { height: 3px; background: var(--rule); }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--bronze), var(--gold)); transition: width .4s ease; }
+  .hud {
+    position: fixed; top: 1.1rem; right: 1.4rem; z-index: 20;
+    font-family: var(--font-mono); font-size: .8rem; color: var(--ink-dim);
+    display: flex; align-items: center; gap: .6rem;
+  }
+  .dots { position: fixed; left: 50%; bottom: 1.1rem; transform: translateX(-50%); z-index: 20; display: flex; gap: .5rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); cursor: pointer; border: none; padding: 0; }
+  .dot.active { background: var(--gold); }
+  .arrow-btn {
+    position: fixed; top: 50%; transform: translateY(-50%); z-index: 20;
+    background: var(--bg-raised); border: 1px solid var(--rule); color: var(--ink);
+    width: 42px; height: 42px; border-radius: 50%; cursor: pointer; font-size: 1.1rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .arrow-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .arrow-btn.prev { left: 1.2rem; }
+  .arrow-btn.next { right: 1.2rem; }
+  .arrow-btn:disabled { opacity: .25; cursor: default; }
+  .arrow-btn:disabled:hover { border-color: var(--rule); color: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .slide { transition: none; }
+  }
+
+  @media print {
+    html, body { overflow: visible; height: auto; }
+    .deck { height: auto; }
+    .slide {
+      position: relative; opacity: 1 !important; transform: none !important;
+      page-break-after: always; height: 100vh;
+    }
+    .nav-ui, .hud, .dots, .arrow-btn { display: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="deck" id="deck">
+
+    <section class="slide active" data-title="Capa">
+      <div class="eyebrow">Trabalho de Engenharia de Dados — PY03</div>
+      <h1>Ceará Transparente<br>Pipeline de Dados e IA</h1>
+      <div class="slide-body">
+        <p>De duas fontes públicas sem trilha de auditoria a um <strong>lakehouse</strong>
+        completo — Bronze → Silver → Gold, com modelos de Machine Learning e um
+        componente de IA generativa rodando em produção, orquestrados de ponta a ponta.</p>
+        <hr class="rule">
+        <p class="mono" style="color:var(--ink-dim)">
+          Equipe: Jaime · Nara · Carlos · Fernanda · Benjamim
+        </p>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>
+  <button class="arrow-btn prev" id="btn-prev" aria-label="Slide anterior">‹</button>
+  <button class="arrow-btn next" id="btn-next" aria-label="Próximo slide">›</button>
+  <div class="nav-ui">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="dots" id="dots"></div>
+  </div>
+
+<script>
+(function () {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const dotsEl = document.getElementById('dots');
+  const total = slides.length;
+  let current = 0;
+
+  slides.forEach((_, i) => {
+    const d = document.createElement('button');
+    d.className = 'dot';
+    d.setAttribute('aria-label', 'Ir para o slide ' + (i + 1));
+    d.addEventListener('click', () => go(i));
+    dotsEl.appendChild(d);
+  });
+  const dots = Array.from(dotsEl.children);
+
+  function render() {
+    slides.forEach((s, i) => s.classList.toggle('active', i === current));
+    dots.forEach((d, i) => d.classList.toggle('active', i === current));
+    document.getElementById('hud-current').textContent = current + 1;
+    document.getElementById('hud-total').textContent = total;
+    document.getElementById('progress-fill').style.width = ((current + 1) / total * 100) + '%';
+    document.getElementById('btn-prev').disabled = current === 0;
+    document.getElementById('btn-next').disabled = current === total - 1;
+    history.replaceState(null, '', '#' + (current + 1));
+  }
+
+  function go(i) {
+    current = Math.max(0, Math.min(total - 1, i));
+    render();
+  }
+
+  document.getElementById('btn-prev').addEventListener('click', () => go(current - 1));
+  document.getElementById('btn-next').addEventListener('click', () => go(current + 1));
+
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { go(current + 1); e.preventDefault(); }
+    if (['ArrowLeft', 'PageUp'].includes(e.key)) { go(current - 1); e.preventDefault(); }
+    if (e.key === 'Home') go(0);
+    if (e.key === 'End') go(total - 1);
+  });
+
+  let touchStartX = null;
+  window.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  window.addEventListener('touchend', (e) => {
+    if (touchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 60) go(current + (dx < 0 ? 1 : -1));
+    touchStartX = null;
+  });
+
+  const hash = parseInt(location.hash.replace('#', ''), 10);
+  if (!isNaN(hash) && hash >= 1 && hash <= total) current = hash - 1;
+  render();
+})();
+</script>
+</body>
+</html>

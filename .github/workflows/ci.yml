@@ -5,16 +5,30 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# Nenhum job escreve no repositório/PR — leitura só.
+permissions:
+  contents: read
+
+# Cancela o run anterior do mesmo branch quando chega um push novo, em vez
+# de deixar runs supersedidos rodando até o fim à toa.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: ruff (lint + format check)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Instala ruff
         run: pip install ruff==0.6.9
       - name: ruff check (lint)
@@ -25,15 +39,19 @@ jobs:
   tests:
     name: pytest + compile jobs Spark
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Instala dependências de teste (subset leve)
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - name: Instala dependências de teste (subset leve — versões alinhadas com requirements.txt)
         run: |
           python -m pip install --upgrade pip
-          pip install pandas pyarrow python-dotenv "sqlalchemy<2.0" requests psycopg2-binary hdfs pytest \
+          pip install pandas==2.2.2 pyarrow==15.0.2 python-dotenv==1.0.1 "sqlalchemy<2.0" \
+            requests==2.32.3 psycopg2-binary==2.9.9 hdfs==2.7.3 pytest==8.2.2 \
             scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2 openai==1.51.0 mlflow==2.14.1
       - name: pytest (regras/normalização/extractors)
         run: pytest -q
@@ -46,6 +64,7 @@ jobs:
   spark-tests:
     name: pytest (Spark local + Iceberg — normalização e idempotência do MERGE INTO)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -55,21 +74,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Instala pyspark (não faz parte da suíte leve do job `tests`)
         run: |
           python -m pip install --upgrade pip
-          pip install pandas python-dotenv pytest pyspark==3.5.3
+          pip install pandas==2.2.2 python-dotenv==1.0.1 pytest==8.2.2 pyspark==3.5.3
       - name: pytest (tests/test_silver_job_spark.py — Spark local[1] + Iceberg em catálogo hadoop, sem HMS/HDFS)
         run: pytest -q tests/test_silver_job_spark.py
 
   dbt:
     name: dbt parse (valida projeto/modelos)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Instala dbt-trino
         run: pip install "dbt-trino==1.8.4"
       - name: dbt parse (não conecta ao Trino — valida refs/macros/testes)
@@ -81,6 +105,7 @@ jobs:
   dbt-integration:
     name: dbt build (Trino+Iceberg+HMS real, dado sintético mínimo)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Achado (26/07/2026, análise crítica): o job `dbt` acima só faz `dbt
     # parse` — nunca conecta no Trino, então nenhum teste (not_null, unique,
     # relationships, os testes singulares assert_*.sql) jamais rodou de
@@ -95,16 +120,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Builda as imagens base (mesmas do servidor, HDFS_HOST é ignorado depois)
-        run: |
-          docker build -t datalab-hive-metastore:local ./docker/hive \
-            --build-arg HDFS_HOST=localhost --build-arg METASTORE_DB_HOST=postgres
-          docker build -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Builda as imagens CI (warehouse file:// em vez de hdfs://)
+      - name: Builda as imagens base (mesmas do servidor, HDFS_HOST é ignorado depois) — com cache de camada (GHA)
         run: |
-          docker build -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci
-          docker build -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci
+          docker buildx build --load -t datalab-hive-metastore:local ./docker/hive \
+            --build-arg HDFS_HOST=localhost --build-arg METASTORE_DB_HOST=postgres \
+            --cache-from type=gha,scope=hive-base --cache-to type=gha,mode=max,scope=hive-base
+          docker buildx build --load -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost \
+            --cache-from type=gha,scope=trino-base --cache-to type=gha,mode=max,scope=trino-base
+
+      - name: Builda as imagens CI (warehouse file:// em vez de hdfs://) — com cache de camada (GHA)
+        run: |
+          docker buildx build --load -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci \
+            --cache-from type=gha,scope=hive-ci --cache-to type=gha,mode=max,scope=hive-ci
+          docker buildx build --load -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci \
+            --cache-from type=gha,scope=trino-ci --cache-to type=gha,mode=max,scope=trino-ci
 
       - name: Sobe rede/volume isolados
         run: |
@@ -115,12 +146,18 @@ jobs:
         run: |
           docker run -d --name postgres --network ci_net \
             -e POSTGRES_USER=hive -e POSTGRES_PASSWORD=hive -e POSTGRES_DB=metastore postgres:15
-          sleep 8
+          for i in $(seq 1 15); do
+            docker exec postgres pg_isready -U hive >/dev/null 2>&1 && break
+            sleep 2
+          done
 
       - name: Sobe Hive Metastore
         run: |
           docker run -d --name hive-metastore --network ci_net -v ci_warehouse:/warehouse hive-metastore-ci:local
-          sleep 20
+          for i in $(seq 1 20); do
+            docker exec hive-metastore bash -c 'echo > /dev/tcp/localhost/9083' 2>/dev/null && break
+            sleep 2
+          done
           docker logs hive-metastore --tail 30
 
       - name: Sobe Trino (porta publicada — dbt roda no runner, não em container)
@@ -148,6 +185,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
       - name: Instala dbt-trino
         run: pip install "dbt-trino==1.8.4"
 

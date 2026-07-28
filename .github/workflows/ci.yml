@@ -130,12 +130,19 @@ jobs:
           docker buildx build --load -t datalab-trino:local ./docker/trino --build-arg HDFS_HOST=localhost \
             --cache-from type=gha,scope=trino-base --cache-to type=gha,mode=max,scope=trino-base
 
-      - name: Builda as imagens CI (warehouse file:// em vez de hdfs://) — com cache de camada (GHA)
+      - name: Builda as imagens CI (warehouse file:// em vez de hdfs://)
+        # Sem buildx aqui de propósito: o builder do buildx (driver
+        # docker-container, usado p/ suportar --cache-to type=gha acima) não
+        # enxerga o image store local do daemon — como este FROM referencia
+        # datalab-hive-metastore:local/datalab-trino:local (imagens só locais,
+        # sem registry), buildx tentava fazer PULL delas e falhava com "pull
+        # access denied". `docker build` normal usa o driver padrão, que
+        # compartilha o image store do daemon — funciona direto. Camada
+        # trivial (1 COPY) sobre uma base que já muda a cada run mesmo, cache
+        # não traria ganho aqui de qualquer forma.
         run: |
-          docker buildx build --load -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci \
-            --cache-from type=gha,scope=hive-ci --cache-to type=gha,mode=max,scope=hive-ci
-          docker buildx build --load -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci \
-            --cache-from type=gha,scope=trino-ci --cache-to type=gha,mode=max,scope=trino-ci
+          docker build -t hive-metastore-ci:local -f .github/ci/Dockerfile.hive-ci .github/ci
+          docker build -t trino-ci:local -f .github/ci/Dockerfile.trino-ci .github/ci
 
       - name: Sobe rede/volume isolados
         run: |

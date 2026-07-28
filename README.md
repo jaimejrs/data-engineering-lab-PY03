@@ -180,9 +180,7 @@ manuais pesados** (validado processando os 1,38M de empenhos do histórico compl
 > 215.839/215.839 preenchidos (100% de cobertura de join), e o relatório
 > narrativo foi gerado com qualidade real via API OpenAI. Ver
 > [`documentacao/diagrama-arquitetura.md`](documentacao/diagrama-arquitetura.md)
-> para o diagrama completo de orquestração/infraestrutura e
-> `docs/06-analise-critica.md` para os bugs reais encontrados rodando contra
-> produção (itens 13 e 15).
+> para o diagrama completo de orquestração/infraestrutura.
 
 ## CI/CD
 
@@ -421,8 +419,7 @@ histórico completo carregado e validado (ver seção "Camadas" acima).
 | CI/CD — 5 jobs de CI (lint/testes/Spark/dbt real) + deploy automatizado | ✅ Rodando a cada push (ver seção "CI/CD") |
 
 Pendências conhecidas e assumidas conscientemente (reconciliação entre camadas,
-segurança lab-grade, SPOF do HDFS) estão documentadas na pasta interna do time
-(`docs/`, não versionada — ver `docs/03-pendencias-e-melhorias.md`).
+segurança lab-grade, SPOF do HDFS) são acompanhadas internamente pelo time.
 
 
 ---

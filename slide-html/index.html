@@ -492,6 +492,44 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Conclusão">
+      <div class="eyebrow">07 — Conclusão</div>
+      <h1>De dado cru e sem trilha a lakehouse em produção</h1>
+      <div class="slide-body">
+        <p>Duas fontes públicas sem chave confiável, sem PK, com data em
+        <code>TEXT</code> e erro de digitação na própria API viraram uma base
+        analítica <strong>testada, versionada e observável</strong> — Bronze
+        → Silver → Gold, com Machine Learning e IA generativa rodando
+        automaticamente, todos os dias, sem intervenção manual.</p>
+
+        <div class="grid cols-3" style="margin-top:1.2rem">
+          <div class="card" style="border-color:var(--bronze)">
+            <span class="stat big" style="color:var(--bronze)">4</span>
+            <p style="margin:0;font-size:.85rem">DAGs encadeadas por Dataset, ponta a ponta em ~5min</p>
+          </div>
+          <div class="card" style="border-color:var(--silver)">
+            <span class="stat big" style="color:var(--silver)">6</span>
+            <p style="margin:0;font-size:.85rem">jobs de CI/CD — de lint a deploy automatizado</p>
+          </div>
+          <div class="card" style="border-color:var(--gold)">
+            <span class="stat big">2</span>
+            <p style="margin:0;font-size:.85rem">modelos de ML + 1 componente de IA generativa, em produção</p>
+          </div>
+        </div>
+
+        <hr class="rule">
+        <p>A maior lição não foi nenhuma ferramenta isolada — foi tratar um
+        trabalho acadêmico com a mesma disciplina de um pipeline real:
+        <strong>nada muda em produção sem ser provado antes</strong>, todo
+        erro relevante vira teste automatizado, e todo achado — bom ou ruim —
+        fica registrado onde o próximo colega (ou avaliador) consegue ver.</p>
+
+        <p class="mono" style="color:var(--ink-dim);margin-top:1.6rem">
+          Jaime · Nara · Carlos · Fernanda · Benjamim — Obrigado.
+        </p>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

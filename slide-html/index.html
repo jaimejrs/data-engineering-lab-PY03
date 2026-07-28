@@ -151,6 +151,58 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Ambiente de Trabalho">
+      <div class="eyebrow">01 — Ambiente de Trabalho</div>
+      <h1>Um laboratório real, não uma maquete</h1>
+      <div class="slide-body">
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Equipe</h3>
+            <p>
+              <strong>Jaime</strong> — engenharia geral, orquestração (Airflow) e infraestrutura/CI-CD·
+              <strong>Nara</strong> — ingestão (extractors API/Postgres) e painel de negócio (Streamlit)·
+              <strong>Carlos</strong> — transformação Silver e decisões de modelagem·
+              <strong>Fernanda</strong> — Fase 3, Machine Learning/IA (dona da atividade)·
+              <strong>Benjamim</strong> — validação de dados e documentação (dicionário de dados).
+            </p>
+          </div>
+          <div class="card">
+            <h3>Laboratório de testes e experimentos</h3>
+            <p>Nada vai para produção sem ser provado antes: stack isolada de
+            Trino+Iceberg+Hive Metastore sobe do zero a cada execução de CI, e
+            mudanças arriscadas (permissão de volume, compaction que derrubava
+            o Trino por OOM) foram primeiro reproduzidas manualmente numa rede
+            Docker isolada no próprio servidor, nunca direto em produção.</p>
+          </div>
+        </div>
+        <div class="grid cols-2" style="margin-top:1.4rem">
+          <div class="card">
+            <h3>Servidor Ubuntu — acesso via SSH</h3>
+            <p><code>ssh dataadm@100.69.31.14</code> — alcançável só pela
+            rede privada <strong>Tailscale</strong> do time, nunca exposto à
+            internet aberta. <strong>24h no ar</strong>, uso concomitante por
+            toda a equipe — por isso existe uma auditoria de acesso própria
+            (sessão SSH + comando executado, mesmo via <code>sudo</code>).</p>
+          </div>
+          <div class="card">
+            <h3>Colaboração via GitHub</h3>
+            <p>Branches por frente de trabalho, Pull Requests com revisão
+            antes do merge na <code>main</code>, histórico completo de decisão
+            técnica nos commits — inclusive esta própria apresentação, feita
+            slide a slide, cada um com seu PR.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:1.4rem">
+          <h3>CI/CD</h3>
+          <p>Todo push roda <strong>5 jobs de integração contínua</strong>
+          (lint, testes unitários, Spark+Iceberg local, <code>dbt build</code>
+          real contra Trino) — e, só depois de tudo passar num push na
+          <code>main</code>, um <strong>job de entrega contínua</strong> aplica
+          o código no servidor real via SSH sobre Tailscale, em segundos.</p>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

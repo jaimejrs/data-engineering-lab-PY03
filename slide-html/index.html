@@ -203,6 +203,53 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Dados (Fonte)">
+      <div class="eyebrow">02 — Dados (Fonte)</div>
+      <h1>Duas fontes públicas, sem trilha de auditoria</h1>
+      <div class="slide-body">
+        <p><strong>API REST Ceará Transparente</strong> (contratos, paginada) +
+        <strong>PostgreSQL de origem</strong> (<code>empenhos</code>,
+        <code>ordem_bancaria_orcamentaria</code>, <code>unidade_gestora</code>)
+        — nenhuma delas pensada para virar base analítica de origem.</p>
+
+        <div class="grid cols-3" style="margin-top:1.2rem">
+          <div class="card">
+            <h3>Análises possíveis</h3>
+            <p>Execução financeira (<span class="stat">75,1%</span> do valor
+            contratado já pago), ranking de órgãos por valor, distribuição
+            por modalidade de contratação, série temporal por ano/trimestre,
+            contratos emergenciais (<span class="stat">2.934</span> de
+            216.358).</p>
+          </div>
+          <div class="card">
+            <h3>Investigação profunda (ML)</h3>
+            <p>Contrato tem valor/prazo/modalidade fora do padrão? Quanto um
+            órgão deve pagar no próximo trimestre? São perguntas que consulta
+            SQL sozinha não responde bem — gancho direto pros dois modelos de
+            Machine Learning (ver slide "Machine Learning").</p>
+          </div>
+          <div class="card">
+            <h3>Problemas reais na fonte</h3>
+            <p>Nenhuma tabela do Postgres tem <strong>PRIMARY KEY</strong>
+            declarada; datas são <code>TEXT</code>, não
+            <code>DATE</code>/<code>TIMESTAMP</code>; a API erra a própria
+            chave de paginação (<code>"sumary"</code>, falta o 2º "m"); e as
+            chaves de junção entre as duas fontes são fracas — <code>num_spu</code>
+            × <code>codprocesso</code> casa em só <span class="stat">~7,5%</span>
+            dos casos.</p>
+          </div>
+        </div>
+
+        <hr class="rule">
+        <p class="mono" style="font-size:.85rem">
+          Outros achados reais: servidor com egress só IPv6 (API é IPv4-only) ·
+          carga sem <code>stream_results=True</code> estourava memória no
+          Postgres (~1,4M linhas) · datas em formato <code>DD/MM/YYYY</code>,
+          não ISO.
+        </p>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

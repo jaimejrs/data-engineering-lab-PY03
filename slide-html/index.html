@@ -439,6 +439,59 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Machine Learning">
+      <div class="eyebrow">06 — Machine Learning</div>
+      <h1>Dois modelos, rodando em produção via DAG 4</h1>
+      <div class="slide-body" style="max-width:1250px">
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Modelo 1 — Detecção de anomalias</h3>
+            <p style="font-size:.85rem;margin-bottom:.6rem">
+              <code>IsolationForest</code> (scikit-learn), não supervisionado —
+              não existe rótulo de "contrato irregular" em nenhuma fonte.</p>
+            <p class="mono" style="font-size:.78rem;opacity:.85;margin:0 0 .6rem">
+              n_estimators=200 · contamination="auto" · random_state=42<br>
+              score = MinMaxScaler(-decision_function(X))
+            </p>
+            <p style="font-size:.85rem;margin-bottom:.4rem">Features: valor,
+            dias de vigência, modalidade e tipo de objeto (one-hot), flag de
+            emergência, histórico de infração do credor.</p>
+            <hr class="rule" style="margin:.7rem 0">
+            <span class="stat" style="color:var(--teal)">216.358</span>
+            <span style="font-size:.8rem;color:var(--ink-dim)"> contratos escorados · </span>
+            <span class="stat" style="color:var(--gold)">24.270</span>
+            <span style="font-size:.8rem;color:var(--ink-dim)"> flagados (11,2%)</span>
+          </div>
+          <div class="card">
+            <h3>Modelo 2 — Previsão de pagamentos</h3>
+            <p style="font-size:.85rem;margin-bottom:.6rem">
+              <code>XGBRegressor</code> por quantil — prevê o valor que cada
+              órgão vai pagar no <strong>próximo trimestre</strong>.</p>
+            <p class="mono" style="font-size:.78rem;opacity:.85;margin:0 0 .6rem">
+              objective="reg:quantileerror" · quantile_alpha=[0.1, 0.5, 0.9]<br>
+              n_estimators=200 · max_depth=4 · learning_rate=0.05
+            </p>
+            <p style="font-size:.85rem;margin-bottom:.4rem">Features: lag do
+            trimestre anterior, lag do mesmo trimestre do ano anterior, valor
+            contratado ainda ativo, modalidade dominante, flag de ano
+            eleitoral.</p>
+            <hr class="rule" style="margin:.7rem 0">
+            <span class="stat" style="color:var(--teal)">941</span>
+            <span style="font-size:.8rem;color:var(--ink-dim)"> previsões (órgão × trimestre), intervalo p10/p50/p90</span>
+          </div>
+        </div>
+        <div class="card" style="margin-top:1.2rem">
+          <h3>MLflow — rastreamento de experimentos</h3>
+          <p style="font-size:.85rem">Cada execução loga hiperparâmetros,
+          métricas (score médio, % flagado, cobertura de lag) e o modelo
+          serializado — sem servidor dedicado, backend em arquivo local.</p>
+          <p class="mono" style="font-size:.82rem;background:var(--bg);padding:.5rem .8rem;border-radius:8px;margin:.5rem 0 0">
+            mlflow ui --backend-store-uri file://$(pwd)/models/artifacts/mlruns
+          </p>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

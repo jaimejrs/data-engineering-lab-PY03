@@ -396,6 +396,49 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Painel Streamlit">
+      <div class="eyebrow">05 — Painel Streamlit</div>
+      <h1>Da Gold para a área de negócio</h1>
+      <div class="slide-body">
+        <p>O painel oficial de apresentação (Streamlit, construído pela Nara)
+        consome os mesmos dados de <code>iceberg.gold.*</code> via Trino —
+        os números abaixo são reais, consultados direto da Gold em produção.</p>
+
+        <div class="grid cols-3" style="margin-top:1rem">
+          <div class="card">
+            <span class="stat big">R$ 47,8 bi</span>
+            <p style="margin:0;font-size:.85rem">valor total contratado — 216.358 contratos</p>
+          </div>
+          <div class="card">
+            <span class="stat big">R$ 35,9 bi</span>
+            <p style="margin:0;font-size:.85rem">valor já pago — <span class="kicker-num">75,1%</span> do contratado</p>
+          </div>
+          <div class="card">
+            <span class="stat big">2.934</span>
+            <p style="margin:0;font-size:.85rem">contratos em caráter emergencial (~1,4%)</p>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:1.3rem">
+          <div class="card">
+            <h3>Principais achados</h3>
+            <p>Os <strong>3 maiores órgãos</strong> (Saúde, Educação, Obras
+            Públicas) concentram sozinhos <span class="kicker-num">~45%</span>
+            de todo o valor contratado — Saúde lidera com R$ 8,78 bi. A
+            concentração é um sinal de onde o controle de gasto público mais
+            importa, e de onde vale mais a pena olhar de perto.</p>
+          </div>
+          <div class="card">
+            <h3>Gancho para a análise em ML</h3>
+            <p>Números agregados respondem "quanto" e "quem" — mas não
+            "esse contrato específico é normal?" nem "quanto esse órgão vai
+            precisar pagar no próximo trimestre?". São exatamente essas duas
+            perguntas que os modelos de Machine Learning respondem a seguir.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>

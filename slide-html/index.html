@@ -532,12 +532,12 @@
 
   </div>
 
-  <div class="hud"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>
+  <div class="hud" role="status" aria-live="polite"><span id="hud-current">1</span><span style="opacity:.4">/</span><span id="hud-total">1</span></div>
   <button class="arrow-btn prev" id="btn-prev" aria-label="Slide anterior">‹</button>
   <button class="arrow-btn next" id="btn-next" aria-label="Próximo slide">›</button>
   <div class="nav-ui">
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-    <div class="dots" id="dots"></div>
+    <div class="progress-bar" role="progressbar" aria-label="Progresso da apresentação"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="dots" id="dots" role="group" aria-label="Ir para um slide específico"></div>
   </div>
 
 <script>

@@ -418,8 +418,6 @@ histórico completo carregado e validado (ver seção "Camadas" acima).
 | Observabilidade — Superset (painéis operacionais) + schema `audit` (infra/acesso) | ✅ Em produção, coleta a cada 5min |
 | CI/CD — 5 jobs de CI (lint/testes/Spark/dbt real) + deploy automatizado | ✅ Rodando a cada push (ver seção "CI/CD") |
 
-Pendências conhecidas e assumidas conscientemente (reconciliação entre camadas,
-segurança lab-grade, SPOF do HDFS) são acompanhadas internamente pelo time.
 
 
 ---

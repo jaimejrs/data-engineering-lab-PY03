@@ -37,13 +37,12 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
     col3.metric(
         "Aproveitamento do empenhado",
         f"{aproveitamento_pct:.1f}%",
-        help="% do valor empenhado que já foi efetivamente pago (valor pago / valor empenhado).",
+        help=(
+            "% do valor empenhado que já foi efetivamente pago (valor pago / valor empenhado). "
+            "Acima de 100% é possível: acontece quando o valor pago já inclui aditivo ou ajuste "
+            "contratual posterior ao valor originalmente empenhado."
+        ),
     )
-    if aproveitamento_pct > 100:
-        st.caption(
-            "ℹ️ Acima de 100% é possível — acontece quando o valor pago já inclui aditivo ou "
-            "ajuste contratual posterior ao valor originalmente empenhado."
-        )
 
     st.divider()
 
@@ -126,12 +125,6 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
     )
     top5_aproveitamento = df_aproveitamento.sort_values("aproveitamento_pct", ascending=False).head(5)
 
-    st.caption(
-        "Considera só órgãos com mais de R$ 100 milhões empenhados no período filtrado — evita que um "
-        "órgão pequeno apareça no topo só por ter um denominador baixo. Valores acima de 100% podem "
-        "ocorrer por aditivo/ajuste contratual (ver observação acima)."
-    )
-
     col_titulo, col_select = st.columns([2, 1])
 
     with col_select:
@@ -139,6 +132,10 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
             "Órgão (top 5 por aproveitamento)",
             options=top5_aproveitamento["nome_orgao"].tolist(),
             key="orgao_aproveitamento_selecionado",
+            help=(
+                "Considera só órgãos com mais de R$ 100 milhões empenhados no período filtrado — evita "
+                "que um órgão pequeno apareça no topo só por ter um denominador baixo."
+            ),
         )
 
     with col_titulo:

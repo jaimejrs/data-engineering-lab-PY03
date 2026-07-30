@@ -15,7 +15,15 @@ def render(
     anos_selecionados: list,
     orgaos_selecionados: list,
 ) -> None:
-    st.subheader("Relatório narrativo (gerado por IA)")
+    st.subheader(
+        "Relatório narrativo (gerado por IA)",
+        help=(
+            "Os contratos com maior grau de atipicidade usam os filtros de Ano/Órgão da barra "
+            "lateral. As previsões de pagamento usam sempre a referência escolhida na aba "
+            "'Previsão de Pagamentos', independente desses filtros — são duas fontes com "
+            "escopos próprios, combinadas no mesmo relatório."
+        ),
+    )
     st.caption(
         "Ao clicar no botão, os contratos com maior grau de atipicidade e as "
         "previsões de pagamento mais recentes são enviados como texto já "
@@ -23,9 +31,7 @@ def render(
         "achados em português claro — nenhum valor é inventado pela IA."
     )
     st.caption(
-        "⚠️ Escopos diferentes: a seção de **anomalias** respeita os filtros de Ano/Órgão da "
-        f"barra lateral; a seção de **previsão** usa sempre a referência escolhida na aba "
-        f"'Previsão de Pagamentos' ({ano_ref}-T{trimestre_previsto_sel}), independente desses filtros."
+        f"Referência de previsão usada: {ano_ref}-T{trimestre_previsto_sel} (ajustável na aba 'Previsão de Pagamentos')."
     )
 
     if st.button("🪄 Gerar novo relatório com IA", type="primary"):

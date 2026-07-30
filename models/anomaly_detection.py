@@ -33,6 +33,27 @@ pra quem for operacionalizar (Fernanda/analistas) escolher um limiar
 compatível com a capacidade real de revisão manual, em vez de um corte
 arbitrário embutido no código.
 
+Hiperparâmetros (revisão de 30/07/2026, docs/06-analise-critica.md):
+  - `contamination`: só afeta `flag_anomalia` (o corte binário do `predict()`
+    do próprio Isolation Forest) — verificado experimentalmente que variar
+    contamination desloca `decision_function()` por uma CONSTANTE (`offset_`),
+    sem mudar o ranking relativo dos contratos (correlação de Spearman = 1.0
+    entre contamination=0.01/0.05/0.1/'auto' num teste controlado). Como
+    `score_anomalia()` normaliza com MinMaxScaler logo em seguida, esse
+    deslocamento constante desaparece — `contamination` não tem NENHUM efeito
+    sobre o score contínuo que o painel usa para priorizar revisão. Não há
+    o que "otimizar" aqui sem rótulo; manter 'auto' (default do scikit-learn)
+    é o correto.
+  - `n_estimators`: este SIM afeta o score contínuo — mais árvores reduz a
+    variância da estimativa. Testado sobre os ~216 mil contratos reais de
+    produção, re-treinando com seeds diferentes e medindo a interseção do
+    "top 1% mais atípico" entre execuções (a métrica que importa: quem entra
+    na lista de revisão prioritária não pode depender de sorte do random_state):
+    100 árvores → 80,8% de interseção; 200 (valor anterior) → 87,6%; 400 →
+    92,6%; 600 → 94,3% (retornos decrescentes a partir daqui). Subido para
+    400 — dobra o custo de treino em troca de uma redução real na variância
+    de quem aparece como prioridade de revisão.
+
 Uso: python -m models.anomaly_detection [--contamination auto]
 """
 
@@ -71,7 +92,13 @@ MLFLOW_EXPERIMENT = "anomaly_detection"
 # dbt/models/sources.yml, source `ml_scores`), então o score aparece
 # automaticamente no próximo build.
 SCORE_TABLE = "iceberg.ml.score_anomalia_contrato"
-MODEL_VERSION = "isolation_forest_v1"
+MODEL_VERSION = "isolation_forest_v2_400trees"
+
+# 400, não 200 — ver "Hiperparâmetros" no topo do módulo: evidência real
+# (~216 mil contratos de produção) de que 200 árvores só reproduzem 87,6% do
+# "top 1% mais atípico" entre execuções com seeds diferentes; 400 sobe pra
+# 92,6%, um ganho real de estabilidade pra quem prioriza revisão manual.
+N_ESTIMATORS = 400
 
 # Categorias mais frequentes de tipo_objeto mantidas isoladas; o resto vira "OUTROS"
 # (evita one-hot explodir com centenas de descrições de objeto quase únicas).
@@ -151,7 +178,7 @@ def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def train_model(X: pd.DataFrame, contamination: float | str = "auto", random_state: int = 42) -> IsolationForest:
-    model = IsolationForest(contamination=contamination, random_state=random_state, n_estimators=200)
+    model = IsolationForest(contamination=contamination, random_state=random_state, n_estimators=N_ESTIMATORS)
     model.fit(X)
     return model
 
@@ -266,7 +293,7 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
         mlflow.log_params(
             {
                 "contamination": contamination,
-                "n_estimators": 200,
+                "n_estimators": N_ESTIMATORS,
                 "random_state": 42,
                 "n_contratos_entrada": len(raw),
                 "n_features": X.shape[1],

@@ -38,6 +38,18 @@ Corrigido: todo agrupamento/junção por órgão agora usa `codigo_orgao` (está
 no tempo), nunca `sk_orgao`. `sk_orgao` só aparece nas queries para fazer o
 JOIN com `dim_orgao`, não sai mais no resultado.
 
+Hiperparâmetros (revisão de 30/07/2026, docs/06-analise-critica.md):
+`n_estimators=200/max_depth=4/learning_rate=0.05` eram valores padrão
+razoáveis, mas nunca tinham passado por busca real — só um holdout único
+(último trimestre conhecido), que não valida hiperparâmetros de forma
+confiável em série temporal. `tune_hyperparameters()` roda validação cruzada
+walk-forward (`time_series_splits()`: cada fold valida um trimestre inteiro
+treinando só com trimestres estritamente anteriores, sem vazamento) sobre um
+grid pequeno, escolhendo pelo pinball loss médio (a métrica correta pra
+regressão por quantil — MAE só avalia a mediana, ignora se p10/p90 estão bem
+calibrados). Chamado a cada `run()`, antes do treino final; os resultados de
+cada combinação testada vão pro MLflow junto com a escolhida.
+
 Uso: python -m models.payment_forecast
 """
 
@@ -62,11 +74,28 @@ ARTIFACT_PATH = os.environ.get(
 
 # Schema `ml` (não `gold` — separado do modelo dimensional desde 26/07/2026).
 FORECAST_TABLE = "iceberg.ml.previsao_pagamento_orgao"
-MODEL_VERSION = "xgboost_quantile_v2_ob"
+MODEL_VERSION = "xgboost_quantile_v3_tuned"
 MLFLOW_EXPERIMENT = "payment_forecast"
 
 TOP_MODALIDADES = 8
 QUANTILES = (0.1, 0.5, 0.9)  # intervalo de confiança ~80% + mediana
+
+DEFAULT_HYPERPARAMS = {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05}
+
+# Grid pequeno de propósito — o painel roda a cada novo `dbt build` da Gold
+# (ver dags/dag_ml_inference.py), então a busca precisa ser rápida. Inclui o
+# ponto DEFAULT_HYPERPARAMS (linha 4) como referência de comparação.
+HYPERPARAM_GRID: list[dict] = [
+    {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.1},
+    {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.05},
+    {"n_estimators": 200, "max_depth": 3, "learning_rate": 0.05},
+    {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05},
+    {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05},
+    {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.03},
+    {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.1},
+]
+
+N_FOLDS_TUNING = 4
 
 PAGAMENTO_QUERY = """
 SELECT
@@ -211,18 +240,26 @@ def build_feature_matrix(panel: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def train_models(X: pd.DataFrame, y: pd.Series, quantiles: tuple[float, ...] = QUANTILES) -> dict[float, XGBRegressor]:
+def train_models(
+    X: pd.DataFrame,
+    y: pd.Series,
+    quantiles: tuple[float, ...] = QUANTILES,
+    hyperparams: dict | None = None,
+) -> dict[float, XGBRegressor]:
     """Um `XGBRegressor` por quantil (`reg:quantileerror`) — dá a mediana (p50)
-    como previsão central e p10/p90 como intervalo de confiança ~80%."""
+    como previsão central e p10/p90 como intervalo de confiança ~80%.
+
+    `hyperparams` (n_estimators/max_depth/learning_rate) vem de
+    `tune_hyperparameters()` quando chamado por `run()`; default
+    `DEFAULT_HYPERPARAMS` quando chamado direto (ex: nos testes)."""
+    params = {**DEFAULT_HYPERPARAMS, **(hyperparams or {})}
     models: dict[float, XGBRegressor] = {}
     for q in quantiles:
         model = XGBRegressor(
             objective="reg:quantileerror",
             quantile_alpha=q,
-            n_estimators=200,
-            max_depth=4,
-            learning_rate=0.05,
             random_state=42,
+            **params,
         )
         model.fit(X, y)
         models[q] = model
@@ -243,7 +280,7 @@ def predict_quantiles(models: dict[float, XGBRegressor], X: pd.DataFrame) -> pd.
     return out
 
 
-def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict[str, float]:
+def evaluate(panel: pd.DataFrame, X: pd.DataFrame, hyperparams: dict | None = None) -> dict[str, float]:
     """Holdout temporal: o último trimestre com alvo conhecido vira teste; o
     resto treina. Métrica: MAE da mediana + cobertura do intervalo [p10, p90]
     (deveria rondar 80% se os quantis estiverem bem calibrados)."""
@@ -261,7 +298,7 @@ def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict[str, float]:
         logger.warning("Sem separação treino/holdout válida — pulando avaliação")
         return {}
 
-    models_eval = train_models(X.loc[train_idx], y.loc[train_idx])
+    models_eval = train_models(X.loc[train_idx], y.loc[train_idx], hyperparams=hyperparams)
     preds = predict_quantiles(models_eval, X.loc[holdout_idx])
     y_true = y.loc[holdout_idx]
 
@@ -270,6 +307,84 @@ def evaluate(panel: pd.DataFrame, X: pd.DataFrame) -> dict[str, float]:
     metrics = {"mae_mediana": float(mae), "cobertura_intervalo_80pct": float(cobertura), "n_holdout": len(holdout_idx)}
     logger.info("Avaliação (holdout=último trimestre conhecido): %s", metrics)
     return metrics
+
+
+def _pinball_loss(y_true: pd.Series, y_pred: pd.Series, quantile: float) -> float:
+    """Métrica correta pra regressão por quantil (função de perda que o
+    próprio `reg:quantileerror` otimiza) — penaliza sub-previsão e
+    sobre-previsão de forma assimétrica conforme o quantil, ao contrário do
+    MAE (que só faz sentido pra medir o p50)."""
+    delta = y_true - y_pred
+    return float((delta.clip(lower=0) * quantile + (-delta).clip(lower=0) * (1 - quantile)).mean())
+
+
+def time_series_splits(panel: pd.DataFrame, X: pd.DataFrame, n_folds: int = N_FOLDS_TUNING) -> list[tuple]:
+    """Validação cruzada walk-forward: cada fold valida UM trimestre inteiro
+    (todas as linhas daquele ano/trimestre com alvo conhecido), treinando só
+    com linhas de trimestres estritamente anteriores — sem vazamento
+    temporal (nenhum fold treina com dado "do futuro" em relação ao que
+    valida). Os últimos `n_folds` trimestres com alvo conhecido viram os
+    folds de validação; o resto de cada um vira o treino daquele fold."""
+    y = panel.loc[X.index, "target_proximo_trimestre"]
+    known_mask = y.notna()
+
+    quarters = panel.loc[X.index, ["ano", "trimestre"]]
+    quarters_with_target = quarters[known_mask].drop_duplicates().sort_values(["ano", "trimestre"])
+    fold_quarters = list(quarters_with_target.itertuples(index=False, name=None))[-n_folds:]
+
+    folds = []
+    for ano_q, trimestre_q in fold_quarters:
+        is_this_quarter = (quarters["ano"] == ano_q) & (quarters["trimestre"] == trimestre_q)
+        valid_idx = X.index[is_this_quarter & known_mask]
+
+        is_earlier = (quarters["ano"] < ano_q) | ((quarters["ano"] == ano_q) & (quarters["trimestre"] < trimestre_q))
+        train_idx = X.index[is_earlier & known_mask]
+
+        if len(valid_idx) and len(train_idx):
+            folds.append((train_idx, valid_idx))
+    return folds
+
+
+def tune_hyperparameters(
+    panel: pd.DataFrame,
+    X: pd.DataFrame,
+    y: pd.Series,
+    grid: list[dict] = HYPERPARAM_GRID,
+    n_folds: int = N_FOLDS_TUNING,
+    quantiles: tuple[float, ...] = QUANTILES,
+) -> tuple[dict, list[dict]]:
+    """Busca de hiperparâmetros com validação cruzada temporal (ver
+    `time_series_splits`) — escolhe pelo pinball loss médio (folds × quantis).
+    Retorna os hiperparâmetros vencedores e o log de todas as tentativas
+    (pra registrar no MLflow, permitindo auditar a escolha depois)."""
+    folds = time_series_splits(panel, X, n_folds=n_folds)
+    if not folds:
+        logger.warning("Sem folds de validação temporal suficientes — mantendo hiperparâmetros padrão")
+        return dict(DEFAULT_HYPERPARAMS), []
+
+    trials: list[dict] = []
+    for params in grid:
+        fold_losses = []
+        for train_idx, valid_idx in folds:
+            models = train_models(X.loc[train_idx], y.loc[train_idx], quantiles=quantiles, hyperparams=params)
+            preds = predict_quantiles(models, X.loc[valid_idx])
+            y_valid = y.loc[valid_idx]
+            loss = sum(_pinball_loss(y_valid, preds[f"p{int(q * 100)}"], q) for q in quantiles) / len(quantiles)
+            fold_losses.append(loss)
+        trials.append(
+            {**params, "pinball_loss_medio": sum(fold_losses) / len(fold_losses), "n_folds": len(fold_losses)}
+        )
+
+    melhor = min(trials, key=lambda t: t["pinball_loss_medio"])
+    melhor_params = {k: melhor[k] for k in ("n_estimators", "max_depth", "learning_rate")}
+    logger.info(
+        "Melhor combinação (walk-forward CV, %s folds, %s candidatos): %s (pinball_loss_medio=%.2f)",
+        len(folds),
+        len(grid),
+        melhor_params,
+        melhor["pinball_loss_medio"],
+    )
+    return melhor_params, trials
 
 
 def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict[float, XGBRegressor]) -> pd.DataFrame:
@@ -353,14 +468,21 @@ def run(persist: bool = True) -> pd.DataFrame:
         X = build_feature_matrix(panel)
         y = panel.loc[X.index, "target_proximo_trimestre"]
 
+        # Busca de hiperparâmetros com validação cruzada temporal (ver
+        # "Hiperparâmetros" no topo do módulo) — roda ANTES do log_params
+        # principal pra logar os hiperparâmetros vencedores, não os fixos.
+        melhor_params, trials = tune_hyperparameters(panel, X, y)
+        for i, trial in enumerate(trials):
+            mlflow.log_metric(f"tuning_trial_{i}_pinball_loss", trial["pinball_loss_medio"])
+
         mlflow.log_params(
             {
                 "quantiles": QUANTILES,
-                "n_estimators": 200,
-                "max_depth": 4,
-                "learning_rate": 0.05,
+                **melhor_params,
                 "n_orgaos_trimestres": len(X),
                 "n_features": X.shape[1],
+                "hyperparam_tuning_n_trials": len(trials),
+                "hyperparam_tuning_n_folds": N_FOLDS_TUNING,
             }
         )
         mlflow.set_tag("model_version", MODEL_VERSION)
@@ -378,12 +500,13 @@ def run(persist: bool = True) -> pd.DataFrame:
                 "suspeita de regressão do bug de agrupamento por sk_orgao versionado por ano."
             )
 
-        metrics = evaluate(panel, X)  # holdout = último trimestre com alvo conhecido
+        # holdout = último trimestre com alvo conhecido, já com os hiperparâmetros vencedores
+        metrics = evaluate(panel, X, hyperparams=melhor_params)
         if metrics:
             mlflow.log_metrics(metrics)
 
         train_idx = X.index[y.notna()]
-        models = train_models(X.loc[train_idx], y.loc[train_idx])
+        models = train_models(X.loc[train_idx], y.loc[train_idx], hyperparams=melhor_params)
         save_model(models, list(X.columns))
 
         resultado = forecast_next_quarter(panel, X, models)

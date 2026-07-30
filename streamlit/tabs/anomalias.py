@@ -68,17 +68,44 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
     """
 
+    # Evolução por ano — de propósito SEM o filtro de ano da barra lateral
+    # (é o contexto histórico que a visão de um único ano não mostra); com o
+    # filtro de órgão aplicado, pra respeitar o recorte que o usuário já fez.
+    query_evolucao_anual = f"""
+        SELECT
+            fc.ano,
+            COUNT(*) AS total_contratos,
+            SUM(CASE WHEN fc.score_anomalia >= 0.70 THEN 1 ELSE 0 END) AS n_anomalos
+        FROM iceberg.gold.fato_contrato fc
+        JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
+        WHERE fc.score_anomalia IS NOT NULL
+        {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
+        GROUP BY fc.ano
+        ORDER BY fc.ano
+    """
+
     df_anom = run_query(query_anomalias)
     df_dist_completa = run_query(query_distribuicao_completa)
     df_valor_total = run_query(query_valor_total_contratos)
+    df_evolucao_anual = run_query(query_evolucao_anual)
     valor_total_contratos = (
         df_valor_total.iloc[0]["valor_total"]
         if not df_valor_total.empty and pd.notna(df_valor_total.iloc[0]["valor_total"])
         else 0
     )
 
+    df_modelo_info = run_query("SELECT MAX(scored_at) AS ultimo FROM iceberg.ml.score_anomalia_contrato")
+    ultimo_treino = (
+        df_modelo_info.iloc[0]["ultimo"]
+        if not df_modelo_info.empty and pd.notna(df_modelo_info.iloc[0]["ultimo"])
+        else None
+    )
+
     st.subheader("Distribuição do score de anomalia")
-    st.caption("Todos os contratos escorados no período filtrado, independente do score mínimo abaixo.")
+    caption_dist = "Todos os contratos escorados no período filtrado, independente do score mínimo abaixo."
+    if ultimo_treino is not None:
+        caption_dist += f" Modelo (Isolation Forest) atualizado em {ultimo_treino:%d/%m/%Y %H:%M}."
+    st.caption(caption_dist)
     bin_edges = np.arange(0, 1.05, 0.05)
     contagens, edges = np.histogram(df_dist_completa["score_anomalia"].astype(float), bins=bin_edges)
     centros = (edges[:-1] + edges[1:]) / 2
@@ -153,24 +180,47 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
 
     st.divider()
 
-    top_orgaos = (
-        df_medio_alto.groupby("nome_orgao")
-        .size()
-        .reset_index(name="qtd_contratos")
-        .sort_values("qtd_contratos", ascending=False)
-        .head(10)
-    )
-    fig_top_orgaos = px.bar(
-        top_orgaos,
-        x="qtd_contratos",
-        y="nome_orgao",
-        orientation="h",
-        title="Top 10 órgãos por nº de contratos anômalos",
-        labels={"qtd_contratos": "Contratos", "nome_orgao": "Órgão"},
-        color_discrete_sequence=[COR_PAGO],
-    )
-    fig_top_orgaos.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig_top_orgaos, use_container_width=True)
+    colA, colB = st.columns(2)
+    with colA:
+        top_orgaos = (
+            df_medio_alto.groupby("nome_orgao")
+            .size()
+            .reset_index(name="qtd_contratos")
+            .sort_values("qtd_contratos", ascending=False)
+            .head(10)
+        )
+        fig_top_orgaos = px.bar(
+            top_orgaos,
+            x="qtd_contratos",
+            y="nome_orgao",
+            orientation="h",
+            title="Top 10 órgãos por nº de contratos anômalos",
+            labels={"qtd_contratos": "Contratos", "nome_orgao": "Órgão"},
+            color_discrete_sequence=[COR_PAGO],
+        )
+        fig_top_orgaos.update_layout(yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig_top_orgaos, use_container_width=True)
+
+    with colB:
+        if df_evolucao_anual.empty:
+            st.info("Sem histórico suficiente para a evolução anual.")
+        else:
+            df_evolucao_anual["pct_anomalos"] = (
+                df_evolucao_anual["n_anomalos"] / df_evolucao_anual["total_contratos"] * 100
+            )
+            fig_evolucao = px.bar(
+                df_evolucao_anual,
+                x="ano",
+                y="pct_anomalos",
+                title="Evolução anual do % de contratos anômalos",
+                labels={"ano": "Ano", "pct_anomalos": "% de contratos (score ≥ 0,70)"},
+                color_discrete_sequence=["#e74c3c"],
+                text_auto=".1f",
+            )
+            fig_evolucao.update_xaxes(type="category")
+            fig_evolucao.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
+            st.plotly_chart(fig_evolucao, use_container_width=True)
+            st.caption("Todos os anos disponíveis — não é filtrado pelo Ano da barra lateral (é o contexto histórico).")
 
     st.subheader("Contratos com maior score de anomalia")
     if len(df_anom) > LIMITE_TABELA:

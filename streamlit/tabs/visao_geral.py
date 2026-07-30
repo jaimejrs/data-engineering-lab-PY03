@@ -114,6 +114,22 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         st.info("Nenhum órgão encontrado para os filtros atuais.")
         return
 
+    st.subheader("Top 10 órgãos por valor pago")
+    st.caption("Ranking por valor absoluto — complementa o ranking por % de aproveitamento abaixo.")
+    top10_valor_pago = df_aproveitamento.nlargest(10, "total_pago")
+    fig_top10_valor = px.bar(
+        top10_valor_pago,
+        x="total_pago",
+        y="nome_orgao",
+        orientation="h",
+        labels={"total_pago": "Valor pago (R$)", "nome_orgao": "Órgão"},
+        color_discrete_sequence=[COR_PAGO],
+    )
+    fig_top10_valor.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_top10_valor, use_container_width=True)
+
+    st.divider()
+
     df_aproveitamento = df_aproveitamento[df_aproveitamento["total_empenhado"] > CORTE_TOP5_APROVEITAMENTO].copy()
 
     if df_aproveitamento.empty:

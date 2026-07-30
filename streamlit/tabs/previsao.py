@@ -42,6 +42,11 @@ COBERTURA_MINIMA_BACKTEST = 0.5
 def render(anos_disponiveis: list) -> tuple[int, int]:
     st.subheader("Valor pago por trimestre — real (ordem bancária) e previsto")
 
+    df_modelo_info = run_query("SELECT MAX(scored_at) AS ultimo FROM iceberg.ml.previsao_pagamento_orgao")
+    if not df_modelo_info.empty and pd.notna(df_modelo_info.iloc[0]["ultimo"]):
+        ultimo_treino = df_modelo_info.iloc[0]["ultimo"]
+        st.caption(f"Modelo (XGBoost quantílico) atualizado em {ultimo_treino:%d/%m/%Y %H:%M}.")
+
     df_universo = run_query("""
         SELECT COUNT(DISTINCT o.codigo) AS total_orgaos
         FROM iceberg.gold.fato_ordem_bancaria fob
@@ -209,6 +214,34 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         )
 
     st.divider()
+
+    # --- Histórico plurianual: contexto que a visão de um único ano (acima)
+    # não dá — de propósito não filtrado por `ano_ref`, mostra todos os anos
+    # com ordem bancária disponível.
+    df_historico = run_query("""
+        SELECT dt.ano, dt.trimestre, SUM(fob.valor) AS valor
+        FROM iceberg.gold.fato_ordem_bancaria fob
+        JOIN iceberg.gold.dim_tempo dt ON fob.sk_tempo = dt.sk_tempo
+        WHERE NOT fob.flag_cancelada
+        GROUP BY dt.ano, dt.trimestre
+        ORDER BY dt.ano, dt.trimestre
+    """)
+    if not df_historico.empty:
+        st.subheader("Histórico: total pago por trimestre (todos os anos)")
+        df_historico["periodo"] = df_historico["ano"].astype(str) + "-T" + df_historico["trimestre"].astype(str)
+        fig_historico = px.line(
+            df_historico,
+            x="periodo",
+            y="valor",
+            markers=True,
+            labels={"valor": "Valor pago (R$)", "periodo": "Trimestre"},
+            color_discrete_sequence=[COR_PAGO],
+        )
+        fig_historico.update_traces(line=dict(width=3), marker=dict(size=7))
+        st.plotly_chart(fig_historico, use_container_width=True)
+        st.caption("Todos os trimestres com ordem bancária disponível — contexto de tendência, não filtrado por ano.")
+
+        st.divider()
 
     # --- Detalhe por órgão: só entre os trimestres que de fato têm previsão.
     trimestres_com_previsao = sorted(prev_map.keys())

@@ -259,10 +259,7 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         "Ver detalhe da previsão por órgão para o trimestre:",
         options=trimestres_com_previsao,
         index=max(range(len(trimestres_com_previsao)), key=lambda i: cobertura(trimestres_com_previsao[i])),
-        format_func=lambda t: (
-            f"T{t} — {prev_map[t][3]}/{total_orgaos_universo} órgãos"
-            + (" (já tem dado real também)" if real_map.get(t) else "")
-        ),
+        format_func=lambda t: f"T{t} — {prev_map[t][3]}/{total_orgaos_universo} órgãos",
     )
 
     query_top5 = f"""

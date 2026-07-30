@@ -1,0 +1,6 @@
+streamlit>=1.35
+trino>=0.328
+pandas>=2.0
+plotly>=5.20
+openai>=1.40
+python-dotenv>=1.0

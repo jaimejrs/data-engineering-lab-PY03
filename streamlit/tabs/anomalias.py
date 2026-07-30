@@ -3,7 +3,8 @@
 import numpy as np
 import pandas as pd
 import plotly.express as px
-from config import COR_PAGO, CORES_FAIXA_RISCO, FAIXA_ALTO, FAIXA_BAIXO, FAIXA_MEDIO
+import plotly.graph_objects as go
+from config import CORES_FAIXA_RISCO, FAIXA_ALTO, FAIXA_BAIXO, FAIXA_MEDIO
 from db import run_query
 from formatting import classificar_risco, formatar_bilhoes
 from sql_filters import anos_filter_sql, orgaos_filter_sql
@@ -91,6 +92,20 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
     """
 
+    # Total de contratos por órgão (independente do score) — dá o contexto de
+    # volume pro gráfico "contratos anômalos sobre o total" logo abaixo: sem
+    # isso, "51 órgãos afetados" parece mais grave do que é, já que a maioria
+    # dos órgãos tem dezenas a centenas de contratos no período.
+    query_contratos_por_orgao = f"""
+        SELECT dorg.nome AS nome_orgao, COUNT(*) AS total_contratos
+        FROM iceberg.gold.fato_contrato fc
+        JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
+        WHERE 1=1
+        {anos_filter_sql(anos_selecionados, "fc.ano")}
+        {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
+        GROUP BY dorg.nome
+    """
+
     # Evolução por ano — de propósito SEM o filtro de ano da barra lateral
     # (é o contexto histórico que a visão de um único ano não mostra); com o
     # filtro de órgão aplicado, pra respeitar o recorte que o usuário já fez.
@@ -110,6 +125,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
     df_anom = run_query(query_anomalias)
     df_dist_completa = run_query(query_distribuicao_completa)
     df_valor_total = run_query(query_valor_total_contratos)
+    df_contratos_por_orgao = run_query(query_contratos_por_orgao)
     df_evolucao_anual = run_query(query_evolucao_anual)
     valor_total_contratos = (
         df_valor_total.iloc[0]["valor_total"]
@@ -258,20 +274,45 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         top_orgaos = (
             df_medio_alto.groupby("nome_orgao")
             .size()
-            .reset_index(name="qtd_contratos")
-            .sort_values("qtd_contratos", ascending=False)
+            .reset_index(name="contratos_anomalos")
+            .sort_values("contratos_anomalos", ascending=False)
             .head(10)
+            .merge(df_contratos_por_orgao, on="nome_orgao", how="left")
         )
-        fig_top_orgaos = px.bar(
-            top_orgaos,
-            x="qtd_contratos",
-            y="nome_orgao",
+        # fillna defensivo: todo órgão com contrato anômalo necessariamente
+        # aparece na query de total (sem filtro de score) — não devia disparar.
+        top_orgaos["total_contratos"] = top_orgaos["total_contratos"].fillna(top_orgaos["contratos_anomalos"])
+        top_orgaos["pct_anomalo"] = top_orgaos["contratos_anomalos"] / top_orgaos["total_contratos"] * 100
+        ordem_categoria = top_orgaos.sort_values("contratos_anomalos")["nome_orgao"].tolist()
+
+        fig_top_orgaos = go.Figure()
+        fig_top_orgaos.add_bar(
+            name="Total de contratos",
+            y=top_orgaos["nome_orgao"],
+            x=top_orgaos["total_contratos"],
             orientation="h",
-            title="Top 10 órgãos por nº de contratos anômalos",
-            labels={"qtd_contratos": "Contratos", "nome_orgao": "Órgão"},
-            color_discrete_sequence=[COR_PAGO],
+            marker_color="#C7D1CC",
+            hovertemplate="%{y}<br>Total de contratos: %{x}<extra></extra>",
         )
-        fig_top_orgaos.update_layout(yaxis={"categoryorder": "total ascending"})
+        fig_top_orgaos.add_bar(
+            name="Contratos anômalos (médio+alto)",
+            y=top_orgaos["nome_orgao"],
+            x=top_orgaos["contratos_anomalos"],
+            orientation="h",
+            marker_color=CORES_FAIXA_RISCO[FAIXA_ALTO],
+            text=[f"{p:.1f}%" for p in top_orgaos["pct_anomalo"]],
+            textposition="outside",
+            customdata=top_orgaos["pct_anomalo"],
+            hovertemplate="%{y}<br>Anômalos: %{x} (%{customdata:.1f}% do total)<extra></extra>",
+        )
+        fig_top_orgaos.update_layout(
+            barmode="overlay",
+            title="Contratos por órgão — anômalos sobre o total (Top 10)",
+            xaxis_title="Nº de contratos",
+            yaxis_title="Órgão",
+            yaxis={"categoryorder": "array", "categoryarray": ordem_categoria},
+            legend_title="",
+        )
         st.plotly_chart(fig_top_orgaos, use_container_width=True)
 
     with colB:

@@ -149,14 +149,17 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
 
     with col_select:
         orgao_escolhido = st.selectbox(
-            "Órgão",
+            "Órgão (clique e digite para buscar)",
             options=todos_orgaos,
             index=indice_padrao,
             key="orgao_aproveitamento_selecionado",
+            placeholder="Digite o nome do órgão...",
             help=(
-                "Lista todos os órgãos do período filtrado. Por padrão já vem selecionado o de maior "
-                "% de aproveitamento entre os que empenharam mais de R$ 100 milhões — evita que um "
-                'órgão pequeno apareça como "o melhor" só por ter um denominador baixo.'
+                f"Lista os {len(todos_orgaos)} órgãos do período filtrado — clique no campo e digite "
+                "parte do nome pra filtrar em vez de rolar a lista inteira. Por padrão já vem "
+                "selecionado o de maior % de aproveitamento entre os que empenharam mais de R$ 100 "
+                'milhões — evita que um órgão pequeno apareça como "o melhor" só por ter um '
+                "denominador baixo."
             ),
         )
 

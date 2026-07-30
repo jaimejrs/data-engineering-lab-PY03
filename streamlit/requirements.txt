@@ -13,3 +13,9 @@ openai==1.51.0
 # keyword argument 'proxies'" ao instanciar OpenAI() (erro visto na aba Resumo IA).
 httpx<0.28
 python-dotenv==1.0.1
+
+# Exportar o relatório narrativo em PDF (streamlit/pdf_export.py) — conversão
+# Markdown -> HTML -> PDF 100% Python (sem wkhtmltopdf/Chromium), pra não
+# precisar de apt-get no Dockerfile do painel.
+Markdown==3.10.2
+xhtml2pdf==0.2.17

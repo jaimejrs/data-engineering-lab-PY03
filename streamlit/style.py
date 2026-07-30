@@ -73,15 +73,20 @@ section[data-testid="stSidebar"] hr {
 }
 
 /* Selects FORA da sidebar (área principal, ex: "Ano de referência",
-   "Órgão (top 5 por aproveitamento)"): o tema do app
-   (.streamlit/config.toml, secondaryBackgroundColor) já deixa o fundo desses
-   widgets verde escuro em QUALQUER lugar da página, não só na sidebar — só
-   não tínhamos corrigido o texto (preto por padrão, textColor do tema) fora
-   dela. Regra sem escopo de sidebar, mas com especificidade menor que a
-   regra de dentro da sidebar acima — o CSS aplica esta aqui só onde a outra,
-   mais específica, não se aplica (fora da sidebar). */
+   "Órgão"): o tema do app (.streamlit/config.toml, secondaryBackgroundColor)
+   deixa o fundo desses widgets verde escuro em QUALQUER lugar da página, não
+   só na sidebar. Em vez de manter o verde e só ajustar o texto, o fundo vira
+   amarelo (cor de destaque do branding, mesma do primaryColor/COR_EMPENHADO)
+   — dá mais variedade visual ao painel (nem tudo verde) e o texto escuro
+   correspondente garante contraste. Regra sem escopo de sidebar, mas com
+   especificidade menor que a regra de dentro da sidebar acima — só se aplica
+   onde a outra, mais específica, não vale (fora da sidebar). */
+div[data-baseweb="select"] {
+    background-color: #F5B301;
+    border-radius: 8px;
+}
 div[data-baseweb="select"] * {
-    color: #FFFFFF !important;
+    color: #16281F !important;
 }
 
 /* ---------- Abas ---------- */

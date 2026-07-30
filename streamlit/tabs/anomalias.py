@@ -6,12 +6,50 @@ import plotly.express as px
 import plotly.graph_objects as go
 from config import CORES_FAIXA_RISCO, FAIXA_ALTO, FAIXA_BAIXO, FAIXA_MEDIO
 from db import run_query
-from formatting import classificar_risco, formatar_bilhoes
+from formatting import classificar_risco, formatar_bilhoes, formatar_moeda_adaptativo
 from sql_filters import anos_filter_sql, orgaos_filter_sql
 
 import streamlit as st
 
 LIMITE_TABELA = 500
+
+_COLUNAS_TABELA_CONTRATOS = (
+    "id_contrato_origem",
+    "ano",
+    "nome_orgao",
+    "nome_credor",
+    "tipo_credor",
+    "descricao_modalidade",
+    "valor_contrato",
+    "valor_pago",
+    "score_anomalia",
+    "status",
+    "flag_emergency",
+)
+
+
+def _formatar_tabela_contratos(df: pd.DataFrame) -> pd.DataFrame:
+    """Formata e renomeia as colunas de contrato pra exibição em tabela —
+    mesmo tratamento em R$ já usado nos st.metric (formatting.py), só que
+    também aplicado às tabelas (achado 2.3 da análise crítica de 30/07/2026:
+    antes as tabelas mostravam valor bruto e nome de coluna técnico, ex:
+    "valor_contrato": 1211176192)."""
+    return pd.DataFrame(
+        {
+            "Contrato": df["id_contrato_origem"],
+            "Ano": df["ano"],
+            "Órgão": df["nome_orgao"],
+            "Credor": df["nome_credor"],
+            "Tipo de credor": df["tipo_credor"],
+            "Modalidade": df["descricao_modalidade"],
+            "Valor do contrato": df["valor_contrato"].apply(formatar_moeda_adaptativo),
+            "Valor pago": df["valor_pago"].apply(formatar_moeda_adaptativo),
+            "Score de anomalia": df["score_anomalia"].astype(float).apply(lambda v: f"{v:.1%}"),
+            "Status": df["status"],
+            "Emergencial": df["flag_emergency"].map({True: "Sim", False: "Não"}),
+        }
+    )
+
 
 # Score mínimo pra ENTRAR no histograma "Distribuição do score de anomalia"
 # — a maioria dos ~216 mil contratos tem score bem baixo (perto de 0), o que
@@ -199,21 +237,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
                 st.info("Nenhum contrato nessa faixa de score.")
             else:
                 st.dataframe(
-                    df_bin[
-                        [
-                            "id_contrato_origem",
-                            "ano",
-                            "nome_orgao",
-                            "nome_credor",
-                            "tipo_credor",
-                            "descricao_modalidade",
-                            "valor_contrato",
-                            "valor_pago",
-                            "score_anomalia",
-                            "status",
-                            "flag_emergency",
-                        ]
-                    ],
+                    _formatar_tabela_contratos(df_bin[list(_COLUNAS_TABELA_CONTRATOS)]),
                     use_container_width=True,
                     hide_index=True,
                 )
@@ -285,39 +309,56 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         top_orgaos["contratos_anomalos"] / top_orgaos["total_contratos"] * 100,
         0.0,
     )
-    top_orgaos = top_orgaos.sort_values("contratos_anomalos", ascending=False)
-    ordem_categoria = top_orgaos.sort_values("contratos_anomalos")["nome_orgao"].tolist()
+    # Só órgãos com pelo menos 1 contrato atípico entram no gráfico — os
+    # demais (quase metade dos 99 num período típico) viram uma linha de
+    # resumo abaixo em vez de dezenas de barras vazias sem nenhum sinal
+    # (achado 2.4 da análise crítica de 30/07/2026). Nenhum órgão é omitido
+    # dos KPIs/tabelas acima, só deste gráfico específico.
+    orgaos_com_anomalia = top_orgaos[top_orgaos["contratos_anomalos"] > 0].sort_values(
+        "contratos_anomalos", ascending=False
+    )
+    n_orgaos_zero = len(top_orgaos) - len(orgaos_com_anomalia)
 
-    fig_top_orgaos = go.Figure()
-    fig_top_orgaos.add_bar(
-        name="Total de contratos",
-        y=top_orgaos["nome_orgao"],
-        x=top_orgaos["total_contratos"],
-        orientation="h",
-        marker_color="#C7D1CC",
-        hovertemplate="%{y}<br>Total de contratos: %{x}<extra></extra>",
-    )
-    fig_top_orgaos.add_bar(
-        name="Contratos anômalos (médio+alto)",
-        y=top_orgaos["nome_orgao"],
-        x=top_orgaos["contratos_anomalos"],
-        orientation="h",
-        marker_color=CORES_FAIXA_RISCO[FAIXA_ALTO],
-        text=[f"{p:.1f}%" for p in top_orgaos["pct_anomalo"]],
-        textposition="outside",
-        customdata=top_orgaos["pct_anomalo"],
-        hovertemplate="%{y}<br>Anômalos: %{x} (%{customdata:.1f}% do total)<extra></extra>",
-    )
-    fig_top_orgaos.update_layout(
-        barmode="overlay",
-        title="Contratos por órgão — anômalos sobre o total",
-        xaxis_title="Nº de contratos",
-        yaxis_title="Órgão",
-        yaxis={"categoryorder": "array", "categoryarray": ordem_categoria},
-        legend_title="",
-        height=max(500, 24 * len(top_orgaos)),
-    )
-    st.plotly_chart(fig_top_orgaos, use_container_width=True)
+    if orgaos_com_anomalia.empty:
+        st.info("Nenhum órgão com contrato atípico (médio + alto risco) no período filtrado.")
+    else:
+        ordem_categoria = orgaos_com_anomalia.sort_values("contratos_anomalos")["nome_orgao"].tolist()
+
+        fig_top_orgaos = go.Figure()
+        fig_top_orgaos.add_bar(
+            name="Total de contratos",
+            y=orgaos_com_anomalia["nome_orgao"],
+            x=orgaos_com_anomalia["total_contratos"],
+            orientation="h",
+            marker_color="#C7D1CC",
+            hovertemplate="%{y}<br>Total de contratos: %{x}<extra></extra>",
+        )
+        fig_top_orgaos.add_bar(
+            name="Contratos anômalos (médio+alto)",
+            y=orgaos_com_anomalia["nome_orgao"],
+            x=orgaos_com_anomalia["contratos_anomalos"],
+            orientation="h",
+            marker_color=CORES_FAIXA_RISCO[FAIXA_ALTO],
+            text=[f"{p:.1f}%" for p in orgaos_com_anomalia["pct_anomalo"]],
+            textposition="outside",
+            customdata=orgaos_com_anomalia["pct_anomalo"],
+            hovertemplate="%{y}<br>Anômalos: %{x} (%{customdata:.1f}% do total)<extra></extra>",
+        )
+        fig_top_orgaos.update_layout(
+            barmode="overlay",
+            title="Contratos por órgão — anômalos sobre o total",
+            xaxis_title="Nº de contratos",
+            yaxis_title="Órgão",
+            yaxis={"categoryorder": "array", "categoryarray": ordem_categoria},
+            legend_title="",
+            height=max(400, 24 * len(orgaos_com_anomalia)),
+        )
+        st.plotly_chart(fig_top_orgaos, use_container_width=True)
+        if n_orgaos_zero:
+            st.caption(
+                f"+ {n_orgaos_zero} órgão(s) sem nenhum contrato atípico no período filtrado "
+                "(não exibido(s) no gráfico acima)."
+            )
 
     if df_evolucao_anual.empty:
         st.info("Sem histórico suficiente para a evolução anual.")
@@ -341,21 +382,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         total_fmt = f"{len(df_anom):,}".replace(",", ".")
         st.caption(f"Top {LIMITE_TABELA} de {total_fmt} contratos — aumente o score mínimo para uma lista mais curta.")
     st.dataframe(
-        df_anom[
-            [
-                "id_contrato_origem",
-                "ano",
-                "nome_orgao",
-                "nome_credor",
-                "tipo_credor",
-                "descricao_modalidade",
-                "valor_contrato",
-                "valor_pago",
-                "score_anomalia",
-                "status",
-                "flag_emergency",
-            ]
-        ].head(LIMITE_TABELA),
+        _formatar_tabela_contratos(df_anom[list(_COLUNAS_TABELA_CONTRATOS)].head(LIMITE_TABELA)),
         use_container_width=True,
         hide_index=True,
     )

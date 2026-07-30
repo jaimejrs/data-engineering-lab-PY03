@@ -1,5 +1,6 @@
 """Aba "Visão Geral" — KPIs agregados, série mensal e top-5 por aproveitamento."""
 
+import pandas as pd
 import plotly.express as px
 from config import COR_EMPENHADO, COR_PAGO
 from db import run_query
@@ -9,6 +10,35 @@ from sql_filters import anos_filter_sql, orgaos_filter_sql
 import streamlit as st
 
 CORTE_TOP5_APROVEITAMENTO = 100_000_000
+
+# Limiar (análise crítica de 30/07/2026, achado 2.1) pra detectar meses finais
+# com volume de registros muito abaixo do normal — sinal de que a fonte ainda
+# não tem o mês completo, não de queda real de execução (ver caption exibida
+# junto do corte). Mesmo valor de corte (50%) já usado em
+# tabs/previsao.py::COBERTURA_MINIMA_BACKTEST, por consistência.
+LIMIAR_MES_INCOMPLETO = 0.5
+
+
+def _cortar_cauda_incompleta(df: pd.DataFrame, coluna_contagem: str = "n_registros") -> tuple[pd.DataFrame, int]:
+    """Remove os últimos meses cuja contagem de registros esteja abaixo de
+    `LIMIAR_MES_INCOMPLETO` da mediana da série — evita plotar como "queda"
+    um mês que a fonte ainda não terminou de publicar. Só corta a PONTA final
+    (mantém qualquer oscilação real no meio da série intacta). Retorna
+    (df cortado, nº de meses removidos)."""
+    if len(df) <= 1:
+        return df, 0
+    referencia = df[coluna_contagem].median()
+    if not referencia:
+        return df, 0
+    limite = referencia * LIMIAR_MES_INCOMPLETO
+    corte = len(df)
+    for i in range(len(df) - 1, -1, -1):
+        if df[coluna_contagem].iloc[i] < limite:
+            corte = i
+        else:
+            break
+    corte = max(corte, 1)
+    return df.iloc[:corte].reset_index(drop=True), len(df) - corte
 
 
 def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
@@ -55,6 +85,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         SELECT
             dt.ano,
             dt.mes,
+            COUNT(*) AS n_registros,
             SUM(fc.valor_pago) AS valor_pago,
             SUM(fc.valor_empenhado) AS valor_empenhado
         FROM iceberg.gold.fato_contrato fc
@@ -71,6 +102,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
     if df_mensal.empty:
         st.info("Nenhum dado encontrado para os filtros atuais.")
     else:
+        df_mensal, n_cortados = _cortar_cauda_incompleta(df_mensal)
         df_mensal["periodo"] = df_mensal["ano"].astype(str) + "-" + df_mensal["mes"].astype(str).str.zfill(2)
         df_mensal_long = df_mensal.melt(
             id_vars="periodo",
@@ -87,11 +119,16 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
             color="tipo",
             markers=True,
             color_discrete_map={"Pago": COR_PAGO, "Empenhado": COR_EMPENHADO},
-            title="Pago vs. Empenhado por mês",
             labels={"valor": "Valor (R$)", "periodo": "Mês", "tipo": "Origem"},
         )
         fig_mensal.update_traces(line=dict(width=3), marker=dict(size=8))
+        fig_mensal.update_layout(margin=dict(r=120))
         st.plotly_chart(fig_mensal, use_container_width=True)
+        if n_cortados:
+            st.caption(
+                f"{n_cortados} mês(es) mais recente(s) omitido(s) — volume de registros muito abaixo do "
+                "normal, provável defasagem da fonte ainda em processamento, não queda real de execução."
+            )
 
     st.divider()
 
@@ -142,29 +179,40 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
     )
 
     todos_orgaos = sorted(df_aproveitamento["nome_orgao"].tolist())
-    orgao_padrao = top5_aproveitamento.iloc[0]["nome_orgao"] if not top5_aproveitamento.empty else todos_orgaos[0]
-    indice_padrao = todos_orgaos.index(orgao_padrao) if orgao_padrao in todos_orgaos else 0
 
-    col_titulo, col_select = st.columns([2, 1])
-
-    with col_select:
-        orgao_escolhido = st.selectbox(
-            "Órgão (clique e digite para buscar)",
-            options=todos_orgaos,
-            index=indice_padrao,
-            key="orgao_aproveitamento_selecionado",
-            placeholder="Digite o nome do órgão...",
-            help=(
-                f"Lista os {len(todos_orgaos)} órgãos do período filtrado — clique no campo e digite "
-                "parte do nome pra filtrar em vez de rolar a lista inteira. Por padrão já vem "
-                "selecionado o de maior % de aproveitamento entre os que empenharam mais de R$ 100 "
-                'milhões — evita que um órgão pequeno apareça como "o melhor" só por ter um '
-                "denominador baixo."
-            ),
-        )
-
-    with col_titulo:
+    # Filtro global de Órgão (sidebar) já ativo => só resta 1 opção possível
+    # aqui (a lista vem da mesma consulta já filtrada). Mostrar de novo um
+    # seletor "escolha o órgão" com uma única opção é redundante e confunde
+    # (achado 1.2 da análise crítica de 30/07/2026) — usa direto o órgão já
+    # escolhido na sidebar, sem campo extra.
+    if len(orgaos_selecionados) == 1 and todos_orgaos == [orgaos_selecionados[0]]:
+        orgao_escolhido = orgaos_selecionados[0]
         st.subheader(orgao_escolhido)
+        st.caption("Órgão já definido pelo filtro 'Órgão' da barra lateral.")
+    else:
+        orgao_padrao = top5_aproveitamento.iloc[0]["nome_orgao"] if not top5_aproveitamento.empty else todos_orgaos[0]
+        indice_padrao = todos_orgaos.index(orgao_padrao) if orgao_padrao in todos_orgaos else 0
+
+        col_titulo, col_select = st.columns([2, 1])
+
+        with col_select:
+            orgao_escolhido = st.selectbox(
+                "Órgão (clique e digite para buscar)",
+                options=todos_orgaos,
+                index=indice_padrao,
+                key="orgao_aproveitamento_selecionado",
+                placeholder="Digite o nome do órgão...",
+                help=(
+                    f"Lista os {len(todos_orgaos)} órgãos do período filtrado — clique no campo e digite "
+                    "parte do nome pra filtrar em vez de rolar a lista inteira. Por padrão já vem "
+                    "selecionado o de maior % de aproveitamento entre os que empenharam mais de R$ 100 "
+                    'milhões — evita que um órgão pequeno apareça como "o melhor" só por ter um '
+                    "denominador baixo."
+                ),
+            )
+
+        with col_titulo:
+            st.subheader(orgao_escolhido)
 
     linha_orgao = df_aproveitamento[df_aproveitamento["nome_orgao"] == orgao_escolhido].iloc[0]
 
@@ -173,6 +221,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         SELECT
             dt.ano,
             dt.mes,
+            COUNT(*) AS n_registros,
             SUM(fc.valor_empenhado) AS valor_empenhado,
             SUM(fc.valor_pago) AS valor_pago
         FROM iceberg.gold.fato_contrato fc
@@ -191,6 +240,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         if df_evolucao_orgao.empty:
             st.info("Nenhum dado mensal encontrado para este órgão.")
         else:
+            df_evolucao_orgao, n_cortados_orgao = _cortar_cauda_incompleta(df_evolucao_orgao)
             df_evolucao_orgao["periodo"] = (
                 df_evolucao_orgao["ano"].astype(str) + "-" + df_evolucao_orgao["mes"].astype(str).str.zfill(2)
             )
@@ -211,11 +261,17 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
                 color="tipo",
                 markers=True,
                 color_discrete_map={"Empenhado": COR_EMPENHADO, "Pago": COR_PAGO},
-                title=f"Empenhado vs. Pago por mês — {orgao_escolhido}",
+                title="Empenhado vs. Pago por mês",
                 labels={"valor": "Valor (R$)", "periodo": "Mês", "tipo": "Origem"},
             )
             fig_evolucao.update_traces(line=dict(width=3), marker=dict(size=8))
+            fig_evolucao.update_layout(margin=dict(r=120))
             st.plotly_chart(fig_evolucao, use_container_width=True)
+            if n_cortados_orgao:
+                st.caption(
+                    f"{n_cortados_orgao} mês(es) mais recente(s) omitido(s) — volume de registros muito "
+                    "abaixo do normal para este órgão, provável defasagem da fonte."
+                )
 
     with col_pct:
         st.metric(

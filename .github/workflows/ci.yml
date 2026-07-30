@@ -62,12 +62,39 @@ jobs:
             requests==2.32.3 psycopg2-binary==2.9.9 hdfs==2.7.3 pytest==8.2.2 \
             scikit-learn==1.5.0 joblib==1.4.2 xgboost==2.0.3 trino==0.328.0 pyyaml==6.0.2 openai==1.51.0 mlflow==2.14.1
       - name: pytest (regras/normalização/extractors)
-        run: pytest -q
+        # --ignore=streamlit: tem sua própria suíte/dependências, ver job
+        # `streamlit-smoke` abaixo — instalar streamlit/plotly/etc aqui só
+        # pra esse 1 teste infla essa suíte "leve" à toa.
+        run: pytest -q --ignore=streamlit
       - name: Compila os jobs PySpark (sintaxe; pyspark não instalado)
         run: python -m py_compile src/spark_jobs/*.py
 
       - name: Compila os módulos de ML e as DAGs (sintaxe; airflow não instalado)
         run: python -m py_compile models/*.py dags/*.py
+
+  streamlit-smoke:
+    name: pytest (painel Streamlit — teste de fumaça)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Achado (análise crítica de 30/07/2026): um rebuild da imagem Docker do
+    # painel puxou uma versão mais nova do Streamlit sem aviso (requirements
+    # sem teto) e quebrou o CSS dos filtros silenciosamente — nenhum teste
+    # pegou isso na hora. Este job carrega o painel inteiro (AppTest, Trino
+    # mockado em streamlit/tests/test_app_smoke.py) pra pegar QUALQUER
+    # exceção Python no carregamento das 4 abas antes de chegar em produção.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: streamlit/requirements.txt
+      - name: Instala as dependências do painel (mesmo requirements.txt do Dockerfile) + pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r streamlit/requirements.txt pytest==8.2.2
+      - name: pytest (streamlit/tests — smoke test com Trino mockado)
+        run: pytest -q streamlit/tests
 
   spark-tests:
     name: pytest (Spark local + Iceberg — normalização e idempotência do MERGE INTO)

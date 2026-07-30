@@ -9,6 +9,7 @@ style.py (CSS) e tabs/ (uma aba por módulo).
 import os
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 
 import streamlit as st
@@ -76,6 +77,11 @@ ano_selecionado = st.sidebar.selectbox(
     "Ano",
     options=anos_disponiveis,
     index=0 if anos_disponiveis else None,
+    help=(
+        "Aplica-se às abas 'Visão Geral' e 'Anomalias em Contratos'. A aba 'Previsão de "
+        "Pagamentos' usa seu próprio filtro 'Ano de referência', independente deste — a previsão "
+        "é relativa ao último trimestre com dado de cada órgão, não a um corte de calendário fixo."
+    ),
 )
 anos_selecionados = [ano_selecionado] if ano_selecionado is not None else []
 
@@ -83,6 +89,11 @@ TODOS_ORGAOS = "Todos os órgãos"
 orgao_selecionado = st.sidebar.selectbox(
     "Órgão",
     options=[TODOS_ORGAOS] + orgaos_df["nome"].tolist(),
+    help=(
+        "Aplica-se às abas 'Visão Geral' e 'Anomalias em Contratos' (e à lista de contratos "
+        "atípicos no 'Resumo (IA)'). Não afeta a previsão de pagamentos, que sempre mostra o "
+        "ranking de todos os órgãos para o trimestre escolhido na aba 'Previsão de Pagamentos'."
+    ),
 )
 orgaos_selecionados = [] if orgao_selecionado == TODOS_ORGAOS else [orgao_selecionado]
 
@@ -106,6 +117,26 @@ with col_titulo_app:
 with col_logo_app:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, use_container_width=True)
+
+
+@st.cache_data(ttl=600)
+def load_data_mais_recente():
+    df = run_query("""
+        SELECT MAX(dt.data) AS data_mais_recente
+        FROM iceberg.gold.fato_ordem_bancaria fob
+        JOIN iceberg.gold.dim_tempo dt ON fob.sk_tempo = dt.sk_tempo
+        WHERE NOT fob.flag_cancelada
+    """)
+    return df.iloc[0]["data_mais_recente"] if not df.empty and pd.notna(df.iloc[0]["data_mais_recente"]) else None
+
+
+_data_mais_recente = load_data_mais_recente()
+if _data_mais_recente is not None:
+    st.caption(
+        f"📅 Dado real disponível até **{_data_mais_recente:%d/%m/%Y}** (ordem bancária). "
+        "Períodos após essa data em qualquer gráfico refletem previsão ou dado ainda incompleto na fonte, "
+        "não necessariamente queda de execução."
+    )
 
 tab_geral, tab_previsao, tab_anomalias, tab_resumo = st.tabs(
     ["Visão Geral", "Previsão de Pagamentos", "Anomalias em Contratos", "Resumo (IA)"]

@@ -36,7 +36,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from config import COR_PAGO, COR_PREVISTO
 from db import run_query
-from formatting import formatar_bilhoes
+from formatting import formatar_bilhoes, formatar_moeda_adaptativo
 
 import streamlit as st
 
@@ -145,29 +145,35 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     fig.update_layout(
         barmode="overlay",
         bargap=0.35,
-        title=f"Pago vs. Previsto por trimestre — {ano_ref}",
+        # Sem título interno — duplicava o st.subheader logo acima (achado
+        # 5.2 da análise crítica de 30/07/2026); o ano de referência já
+        # aparece no próprio seletor "Ano de referência" abaixo.
         xaxis_title="Trimestre",
         yaxis_title="Valor (R$)",
         legend_title="Origem",
+        margin=dict(r=140),
     )
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Ver números exatos por trimestre"):
-        st.dataframe(
-            pd.DataFrame(
-                {
-                    "trimestre": labels,
-                    "pago (real, ordem bancária)": reais,
-                    "previsto (p10)": [prev_map[t][0] if t in prev_map else None for t in trimestres],
-                    "previsto (mediana)": previstos_p50,
-                    "previsto (p90)": [prev_map[t][2] if t in prev_map else None for t in trimestres],
-                    "órgãos previstos": [prev_map[t][3] if t in prev_map else None for t in trimestres],
-                    "cobertura": [f"{cobertura(t):.0%}" if t in prev_map else None for t in trimestres],
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+        df_numeros = pd.DataFrame(
+            {
+                "Trimestre": labels,
+                "Pago (real, ordem bancária)": [formatar_moeda_adaptativo(v) if v else "—" for v in reais],
+                "Previsto (P10)": [
+                    formatar_moeda_adaptativo(prev_map[t][0]) if t in prev_map else "—" for t in trimestres
+                ],
+                "Previsto (mediana)": [
+                    formatar_moeda_adaptativo(prev_map[t][1]) if t in prev_map else "—" for t in trimestres
+                ],
+                "Previsto (P90)": [
+                    formatar_moeda_adaptativo(prev_map[t][2]) if t in prev_map else "—" for t in trimestres
+                ],
+                "Órgãos previstos": [prev_map[t][3] if t in prev_map else None for t in trimestres],
+                "Cobertura": [f"{cobertura(t):.0%}" if t in prev_map else None for t in trimestres],
+            }
         )
+        st.dataframe(df_numeros, use_container_width=True, hide_index=True)
 
     # --- KPIs
     total_real_ano = sum(v for v in real_map.values() if v)
@@ -255,10 +261,18 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     if not trimestres_com_previsao:
         return ano_ref, trimestres[-1]
 
+    # Prioriza o trimestre "forward" (sem dado real ainda) — é o que importa
+    # pro gestor planejar o próximo período. Cobertura só desempata entre
+    # candidatos forward; antes o critério era só "maior cobertura", que
+    # podia escolher um trimestre retroativo já fechado só por ter mais
+    # órgãos cobertos (achado 3.3 da análise crítica de 30/07/2026).
+    candidatos_forward = [t for t in trimestres_com_previsao if not real_map.get(t)]
+    trimestre_padrao = max(candidatos_forward or trimestres_com_previsao, key=cobertura)
+
     trimestre_detalhe = st.selectbox(
         "Ver detalhe da previsão por órgão para o trimestre:",
         options=trimestres_com_previsao,
-        index=max(range(len(trimestres_com_previsao)), key=lambda i: cobertura(trimestres_com_previsao[i])),
+        index=trimestres_com_previsao.index(trimestre_padrao),
         format_func=lambda t: f"T{t} — {prev_map[t][3]}/{total_orgaos_universo} órgãos",
     )
 
@@ -293,10 +307,14 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
             st.plotly_chart(fig_top5, use_container_width=True)
 
         with col_dir:
-            st.dataframe(
-                df_top5[["nome_orgao", "valor_previsto_p10", "valor_previsto_p50", "valor_previsto_p90"]],
-                use_container_width=True,
-                hide_index=True,
+            df_top5_fmt = pd.DataFrame(
+                {
+                    "Órgão": df_top5["nome_orgao"],
+                    "Previsto (P10)": df_top5["valor_previsto_p10"].apply(formatar_moeda_adaptativo),
+                    "Previsto (mediana)": df_top5["valor_previsto_p50"].apply(formatar_moeda_adaptativo),
+                    "Previsto (P90)": df_top5["valor_previsto_p90"].apply(formatar_moeda_adaptativo),
+                }
             )
+            st.dataframe(df_top5_fmt, use_container_width=True, hide_index=True)
 
     return ano_ref, trimestre_detalhe

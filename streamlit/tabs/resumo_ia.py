@@ -2,9 +2,10 @@
 
 from datetime import datetime
 
+import pandas as pd
 from ai_report import gerar_relatorio_ia
 from db import run_query
-from formatting import escapar_cifrao_markdown
+from formatting import escapar_cifrao_markdown, formatar_bilhoes
 from pdf_export import gerar_pdf_relatorio
 from sql_filters import anos_filter_sql, orgaos_filter_sql
 
@@ -36,6 +37,36 @@ def render(
     st.caption(
         f"Referência de previsão usada: {ano_ref}-T{trimestre_previsto_sel} (ajustável na aba 'Previsão de Pagamentos')."
     )
+
+    # Prévia estática (sem custo de LLM) — reaproveita números já calculados
+    # nas outras abas, pra aba não abrir vazia até o clique (achado 3.2 da
+    # análise crítica de 30/07/2026). O botão abaixo continua sendo o único
+    # jeito de gerar o TEXTO narrativo (isso sim custa uma chamada à OpenAI).
+    query_preview_contagem = f"""
+        SELECT COUNT(*) AS n
+        FROM iceberg.gold.fato_contrato fc
+        JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
+        WHERE fc.score_anomalia >= {score_threshold}
+        {anos_filter_sql(anos_selecionados, "fc.ano")}
+        {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
+    """
+    query_preview_previsao = f"""
+        SELECT SUM(valor_previsto_p50) AS total
+        FROM iceberg.ml.previsao_pagamento_orgao
+        WHERE ano_previsto = {ano_ref} AND trimestre_previsto = {trimestre_previsto_sel}
+    """
+    df_preview_contagem = run_query(query_preview_contagem)
+    df_preview_previsao = run_query(query_preview_previsao)
+    n_contratos_atipicos = int(df_preview_contagem.iloc[0]["n"]) if not df_preview_contagem.empty else 0
+    total_previsto_preview = (
+        df_preview_previsao.iloc[0]["total"]
+        if not df_preview_previsao.empty and pd.notna(df_preview_previsao.iloc[0]["total"])
+        else 0
+    )
+
+    col_prev1, col_prev2 = st.columns(2)
+    col_prev1.metric("Contratos atípicos no período", f"{n_contratos_atipicos:,}".replace(",", "."))
+    col_prev2.metric(f"Previsão para {ano_ref}-T{trimestre_previsto_sel}", formatar_bilhoes(total_previsto_preview))
 
     if st.button("🪄 Gerar novo relatório com IA", type="primary"):
         query_anomalias_ia = f"""

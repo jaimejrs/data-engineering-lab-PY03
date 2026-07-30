@@ -32,8 +32,14 @@ from db import run_query  # noqa: E402
 from style import inject_custom_css  # noqa: E402
 from tabs import anomalias, previsao, resumo_ia, visao_geral  # noqa: E402
 
+# Ícone da aba do navegador — brasão do Governo do Ceará (recortado de
+# assets/logo_ceara.png, que tem o brasão + a marca "CEARÁ GOVERNO DO
+# ESTADO" por extenso, larga demais pra um ícone quadrado).
+BRASAO_PATH = os.path.join(os.path.dirname(__file__), "assets", "brasao_ceara.png")
+
 st.set_page_config(
     page_title="Empenhos CE - Anomalias e Previsões",
+    page_icon=BRASAO_PATH if os.path.exists(BRASAO_PATH) else "📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )

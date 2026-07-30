@@ -49,11 +49,7 @@ COBERTURA_MINIMA_BACKTEST = 0.5
 
 def render(anos_disponiveis: list) -> tuple[int, int]:
     st.subheader("Valor pago por trimestre — real (ordem bancária) e previsto")
-
-    df_modelo_info = run_query("SELECT MAX(scored_at) AS ultimo FROM iceberg.ml.previsao_pagamento_orgao")
-    if not df_modelo_info.empty and pd.notna(df_modelo_info.iloc[0]["ultimo"]):
-        ultimo_treino = df_modelo_info.iloc[0]["ultimo"]
-        st.caption(f"Modelo (XGBoost quantílico) atualizado em {ultimo_treino:%d/%m/%Y %H:%M}.")
+    st.caption("Modelo: XGBoost quantílico.")
 
     df_universo = run_query("""
         SELECT COUNT(DISTINCT o.codigo) AS total_orgaos
@@ -155,11 +151,6 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         legend_title="Origem",
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        "Barras sobrepostas (semitransparentes) para comparar diretamente real e previsto no mesmo "
-        "trimestre. Hachura = previsão de baixa cobertura (poucos órgãos com histórico recente o "
-        "suficiente para gerar previsão nesse trimestre) — passe o mouse para ver a cobertura exata."
-    )
 
     with st.expander("Ver números exatos por trimestre"):
         st.dataframe(
@@ -195,12 +186,15 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         t_principal = max(trimestres_so_previstos, key=cobertura)
         total_previsto_futuro = prev_map[t_principal][1]
         col2.metric(
-            f"Previsão para T{t_principal} (próximo trimestre sem dado real)",
+            f"Previsão para T{t_principal}",
             formatar_bilhoes(total_previsto_futuro),
-            help=f"Cobertura: {prev_map[t_principal][3]} de {total_orgaos_universo} órgãos ({cobertura(t_principal):.0%}).",
+            help=(
+                f"Próximo trimestre sem dado real ainda. Cobertura: {prev_map[t_principal][3]} de "
+                f"{total_orgaos_universo} órgãos ({cobertura(t_principal):.0%})."
+            ),
         )
     else:
-        col2.metric("Previsão p/ trimestre(s) sem dado real", "—", help="Todos os trimestres já têm dado real.")
+        col2.metric("Previsão (próximo trimestre)", "—", help="Todos os trimestres já têm dado real.")
 
     trimestres_backtest = [
         t for t in trimestres if t in prev_map and real_map.get(t) and cobertura(t) >= COBERTURA_MINIMA_BACKTEST
@@ -208,12 +202,12 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     if trimestres_backtest:
         erros_pct = [abs(real_map[t] - prev_map[t][1]) / real_map[t] * 100 for t in trimestres_backtest]
         col3.metric(
-            "Erro médio do modelo (trimestres fechados, cobertura ≥ 50%)",
+            "Erro médio do modelo",
             f"{sum(erros_pct) / len(erros_pct):.1f}%",
             help=(
-                "Diferença percentual entre a previsão (mediana) e o valor real, calculada só nos "
-                f"trimestres onde os dois existem E a previsão cobre ao menos {COBERTURA_MINIMA_BACKTEST:.0%} "
-                f"dos órgãos: {', '.join('T' + str(t) for t in trimestres_backtest)}."
+                f"Calculado nos trimestres fechados com cobertura ≥ {COBERTURA_MINIMA_BACKTEST:.0%}: "
+                f"diferença percentual entre a previsão (mediana) e o valor real em "
+                f"{', '.join('T' + str(t) for t in trimestres_backtest)}."
             ),
         )
     else:

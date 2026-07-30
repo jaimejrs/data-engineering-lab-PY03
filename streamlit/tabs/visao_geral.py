@@ -115,7 +115,6 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         return
 
     st.subheader("Top 10 órgãos por valor pago")
-    st.caption("Ranking por valor absoluto — complementa o ranking por % de aproveitamento abaixo.")
     top10_valor_pago = df_aproveitamento.nlargest(10, "total_pago")
     fig_top10_valor = px.bar(
         top10_valor_pago,
@@ -130,34 +129,41 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
 
     st.divider()
 
-    df_aproveitamento = df_aproveitamento[df_aproveitamento["total_empenhado"] > CORTE_TOP5_APROVEITAMENTO].copy()
-
-    if df_aproveitamento.empty:
-        st.info("Nenhum órgão com mais de R$ 100 milhões empenhados no ano para os filtros atuais.")
-        return
-
-    df_aproveitamento["aproveitamento_pct"] = (
-        df_aproveitamento["total_pago"] / df_aproveitamento["total_empenhado"] * 100
+    # aproveitamento_pct calculado pra TODOS os órgãos (mesmo abaixo do corte
+    # de R$100mi) — o corte só define quem entra no "top 5" usado como
+    # sugestão padrão do seletor abaixo, não quem pode ser escolhido nele.
+    df_aproveitamento["aproveitamento_pct"] = df_aproveitamento.apply(
+        lambda r: (r["total_pago"] / r["total_empenhado"] * 100) if r["total_empenhado"] else 0.0, axis=1
     )
-    top5_aproveitamento = df_aproveitamento.sort_values("aproveitamento_pct", ascending=False).head(5)
+    top5_aproveitamento = (
+        df_aproveitamento[df_aproveitamento["total_empenhado"] > CORTE_TOP5_APROVEITAMENTO]
+        .sort_values("aproveitamento_pct", ascending=False)
+        .head(5)
+    )
+
+    todos_orgaos = sorted(df_aproveitamento["nome_orgao"].tolist())
+    orgao_padrao = top5_aproveitamento.iloc[0]["nome_orgao"] if not top5_aproveitamento.empty else todos_orgaos[0]
+    indice_padrao = todos_orgaos.index(orgao_padrao) if orgao_padrao in todos_orgaos else 0
 
     col_titulo, col_select = st.columns([2, 1])
 
     with col_select:
         orgao_escolhido = st.selectbox(
-            "Órgão (top 5 por aproveitamento)",
-            options=top5_aproveitamento["nome_orgao"].tolist(),
+            "Órgão",
+            options=todos_orgaos,
+            index=indice_padrao,
             key="orgao_aproveitamento_selecionado",
             help=(
-                "Considera só órgãos com mais de R$ 100 milhões empenhados no período filtrado — evita "
-                "que um órgão pequeno apareça no topo só por ter um denominador baixo."
+                "Lista todos os órgãos do período filtrado. Por padrão já vem selecionado o de maior "
+                "% de aproveitamento entre os que empenharam mais de R$ 100 milhões — evita que um "
+                'órgão pequeno apareça como "o melhor" só por ter um denominador baixo.'
             ),
         )
 
     with col_titulo:
         st.subheader(orgao_escolhido)
 
-    linha_orgao = top5_aproveitamento[top5_aproveitamento["nome_orgao"] == orgao_escolhido].iloc[0]
+    linha_orgao = df_aproveitamento[df_aproveitamento["nome_orgao"] == orgao_escolhido].iloc[0]
 
     nome_escapado = orgao_escolhido.replace("'", "''")
     query_evolucao_orgao = f"""

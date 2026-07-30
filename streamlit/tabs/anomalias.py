@@ -12,6 +12,13 @@ import streamlit as st
 
 LIMITE_TABELA = 500
 
+# Score mínimo pra ENTRAR no histograma "Distribuição do score de anomalia"
+# — a maioria dos ~216 mil contratos tem score bem baixo (perto de 0), o que
+# achata visualmente a parte que interessa (perto de 0,70/0,85). Corte só
+# visual: não mexe no score_threshold da sidebar (que ainda filtra os KPIs
+# e a tabela abaixo).
+SCORE_MINIMO_HISTOGRAMA = 0.49
+
 
 def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: float) -> None:
     query_anomalias = f"""
@@ -47,20 +54,36 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         ORDER BY fc.score_anomalia DESC
     """
 
-    # Distribuição completa (Baixo/Médio/Alto), independente do score mínimo
-    # escolhido na barra lateral — o slider filtra a tabela e os KPIs abaixo,
-    # não o quadro geral de como os scores estão distribuídos.
+    # Distribuição (score >= SCORE_MINIMO_HISTOGRAMA, ver constante) — colunas
+    # completas de contrato, não só o score: reaproveitada pela tabela que
+    # filtra ao clicar numa coluna do histograma logo abaixo. Independente do
+    # score mínimo escolhido na barra lateral — o slider filtra a tabela de
+    # KPIs mais abaixo, não o quadro geral de como os scores altos se distribuem.
     query_distribuicao_completa = f"""
-        SELECT fc.score_anomalia
+        SELECT
+            fc.id_contrato_origem,
+            fc.ano,
+            fc.valor_contrato,
+            fc.valor_pago,
+            fc.status,
+            fc.flag_emergency,
+            fc.score_anomalia,
+            dorg.nome AS nome_orgao,
+            dcred.nome AS nome_credor,
+            dcred.tipo AS tipo_credor,
+            dmod.descricao_modalidade
         FROM iceberg.gold.fato_contrato fc
         JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
-        WHERE fc.score_anomalia IS NOT NULL
+        LEFT JOIN iceberg.gold.dim_credor dcred ON fc.sk_credor = dcred.sk_credor
+        JOIN iceberg.gold.dim_modalidade dmod ON fc.sk_modalidade = dmod.sk_modalidade
+        WHERE fc.score_anomalia >= {SCORE_MINIMO_HISTOGRAMA}
         {anos_filter_sql(anos_selecionados, "fc.ano")}
         {orgaos_filter_sql(orgaos_selecionados, "dorg.nome")}
+        ORDER BY fc.score_anomalia DESC
     """
 
     query_valor_total_contratos = f"""
-        SELECT SUM(fc.valor_contrato) AS valor_total
+        SELECT SUM(fc.valor_contrato) AS valor_total, COUNT(DISTINCT dorg.nome) AS total_orgaos
         FROM iceberg.gold.fato_contrato fc
         JOIN iceberg.gold.dim_orgao dorg ON fc.sk_orgao = dorg.sk_orgao
         WHERE 1=1
@@ -93,48 +116,93 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         if not df_valor_total.empty and pd.notna(df_valor_total.iloc[0]["valor_total"])
         else 0
     )
-
-    df_modelo_info = run_query("SELECT MAX(scored_at) AS ultimo FROM iceberg.ml.score_anomalia_contrato")
-    ultimo_treino = (
-        df_modelo_info.iloc[0]["ultimo"]
-        if not df_modelo_info.empty and pd.notna(df_modelo_info.iloc[0]["ultimo"])
-        else None
+    total_orgaos_periodo = (
+        int(df_valor_total.iloc[0]["total_orgaos"])
+        if not df_valor_total.empty and pd.notna(df_valor_total.iloc[0]["total_orgaos"])
+        else 0
     )
 
     st.subheader("Distribuição do score de anomalia")
-    caption_dist = "Todos os contratos escorados no período filtrado, independente do score mínimo abaixo."
-    if ultimo_treino is not None:
-        caption_dist += f" Modelo (Isolation Forest) atualizado em {ultimo_treino:%d/%m/%Y %H:%M}."
-    st.caption(caption_dist)
-    bin_edges = np.arange(0, 1.05, 0.05)
-    contagens, edges = np.histogram(df_dist_completa["score_anomalia"].astype(float), bins=bin_edges)
-    centros = (edges[:-1] + edges[1:]) / 2
-    df_hist = pd.DataFrame(
-        {
-            "centro": centros,
-            "contratos": contagens,
-            "faixa": [classificar_risco(c) for c in centros],
-        }
+    st.caption(
+        "Todos os contratos escorados no período filtrado, independente do score mínimo abaixo. "
+        "Modelo: Isolation Forest."
     )
-    fig_hist = px.bar(
-        df_hist,
-        x="centro",
-        y="contratos",
-        color="faixa",
-        color_discrete_map=CORES_FAIXA_RISCO,
-        category_orders={"faixa": [FAIXA_BAIXO, FAIXA_MEDIO, FAIXA_ALTO]},
-        labels={"centro": "Score de anomalia", "contratos": "Nº de contratos", "faixa": "Risco"},
-    )
-    fig_hist.add_vline(
-        x=score_threshold,
-        line_dash="dash",
-        line_color="gray",
-        annotation_text=f"score mínimo atual: {score_threshold:.2f}",
-        annotation_position="top",
-    )
-    fig_hist.update_traces(marker_line_width=0)
-    fig_hist.update_layout(bargap=0.02)
-    st.plotly_chart(fig_hist, use_container_width=True)
+    if df_dist_completa.empty:
+        st.info(f"Nenhum contrato com score ≥ {SCORE_MINIMO_HISTOGRAMA:.2f} para os filtros atuais.")
+    else:
+        bin_edges = np.arange(0, 1.05, 0.05)
+        contagens, edges = np.histogram(df_dist_completa["score_anomalia"].astype(float), bins=bin_edges)
+        centros = (edges[:-1] + edges[1:]) / 2
+        df_hist = pd.DataFrame(
+            {
+                "centro": centros,
+                "contratos": contagens,
+                "faixa": [classificar_risco(c) for c in centros],
+            }
+        )
+        # Bins alinhados ao grid de 0,05 desde 0 (mesmo dos limiares 0,70/0,85),
+        # mas só exibidos a partir de SCORE_MINIMO_HISTOGRAMA — o resto fica
+        # vazio (já filtrado na query) e só ocuparia espaço sem informação.
+        df_hist = df_hist[df_hist["centro"] >= SCORE_MINIMO_HISTOGRAMA]
+        fig_hist = px.bar(
+            df_hist,
+            x="centro",
+            y="contratos",
+            color="faixa",
+            color_discrete_map=CORES_FAIXA_RISCO,
+            category_orders={"faixa": [FAIXA_BAIXO, FAIXA_MEDIO, FAIXA_ALTO]},
+            labels={"centro": "Score de anomalia", "contratos": "Nº de contratos", "faixa": "Risco"},
+        )
+        fig_hist.add_vline(
+            x=score_threshold,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"score mínimo atual: {score_threshold:.2f}",
+            annotation_position="top",
+        )
+        fig_hist.update_traces(marker_line_width=0)
+        fig_hist.update_layout(bargap=0.02)
+        evento_hist = st.plotly_chart(
+            fig_hist,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode=["points"],
+            key="hist_score_anomalia",
+        )
+
+        largura_bin = float(bin_edges[1] - bin_edges[0])
+        pontos_clicados = evento_hist["selection"]["points"] if evento_hist else []
+        if pontos_clicados:
+            centro_clicado = pontos_clicados[0]["x"]
+            low, high = centro_clicado - largura_bin / 2, centro_clicado + largura_bin / 2
+            st.subheader(f"Contratos com score entre {low:.2f} e {high:.2f}")
+            df_bin = df_dist_completa[
+                (df_dist_completa["score_anomalia"] >= low) & (df_dist_completa["score_anomalia"] < high)
+            ]
+            if df_bin.empty:
+                st.info("Nenhum contrato nessa faixa de score.")
+            else:
+                st.dataframe(
+                    df_bin[
+                        [
+                            "id_contrato_origem",
+                            "ano",
+                            "nome_orgao",
+                            "nome_credor",
+                            "tipo_credor",
+                            "descricao_modalidade",
+                            "valor_contrato",
+                            "valor_pago",
+                            "score_anomalia",
+                            "status",
+                            "flag_emergency",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
+            st.caption("Clique em uma coluna do gráfico acima para ver os contratos daquela faixa de score.")
 
     st.divider()
 
@@ -171,9 +239,14 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         help="Percentual que o valor dos contratos médio+alto risco representa do valor total de contratos do período.",
     )
 
-    col5, col6 = st.columns(2)
+    col5, col6, col7 = st.columns(3)
     col5.metric("Órgãos afetados (médio + alto risco)", df_medio_alto["nome_orgao"].nunique())
     col6.metric(
+        "Total de órgãos",
+        total_orgaos_periodo,
+        help="Total de órgãos com contrato no período filtrado (ano/órgão), independente do score.",
+    )
+    col7.metric(
         "Score médio (médio + alto risco)",
         f"{df_medio_alto['score_anomalia'].mean():.3f}" if not df_medio_alto.empty else "N/D",
     )
@@ -220,7 +293,6 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
             fig_evolucao.update_xaxes(type="category")
             fig_evolucao.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
             st.plotly_chart(fig_evolucao, use_container_width=True)
-            st.caption("Todos os anos disponíveis — não é filtrado pelo Ano da barra lateral (é o contexto histórico).")
 
     st.subheader("Contratos com maior score de anomalia")
     if len(df_anom) > LIMITE_TABELA:
@@ -234,12 +306,10 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
                 "nome_orgao",
                 "nome_credor",
                 "tipo_credor",
-                "historico_infringement",
                 "descricao_modalidade",
                 "valor_contrato",
                 "valor_pago",
                 "score_anomalia",
-                "flag_anomalia",
                 "status",
                 "flag_emergency",
             ]

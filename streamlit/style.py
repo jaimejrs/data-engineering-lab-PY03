@@ -72,6 +72,18 @@ section[data-testid="stSidebar"] hr {
     border-color: rgba(255, 255, 255, 0.25);
 }
 
+/* Selects FORA da sidebar (área principal, ex: "Ano de referência",
+   "Órgão (top 5 por aproveitamento)"): o tema do app
+   (.streamlit/config.toml, secondaryBackgroundColor) já deixa o fundo desses
+   widgets verde escuro em QUALQUER lugar da página, não só na sidebar — só
+   não tínhamos corrigido o texto (preto por padrão, textColor do tema) fora
+   dela. Regra sem escopo de sidebar, mas com especificidade menor que a
+   regra de dentro da sidebar acima — o CSS aplica esta aqui só onde a outra,
+   mais específica, não se aplica (fora da sidebar). */
+div[data-baseweb="select"] * {
+    color: #FFFFFF !important;
+}
+
 /* ---------- Abas ---------- */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px;
@@ -110,6 +122,9 @@ div[data-testid="stMetricLabel"] {
 }
 div[data-testid="stMetricValue"] {
     font-weight: 700;
+    /* Reduzida suavemente (padrão do Streamlit é maior) — valores formatados
+       mais longos (ex: "R$ 107,41 bi") cortavam dentro do cartão. */
+    font-size: 1.7rem;
     color: #16281F;
 }
 

@@ -18,13 +18,21 @@ projeto vivo: `docker compose run --rm dbt build`.
 Substitui a carga imperativa anterior (`gold_job.py`/`dw_loader.py`, agora legado).
 Disparo: por Dataset (`SILVER_READY_DATASET`). Ao terminar, emite
 `GOLD_READY_DATASET`, que dispara a DAG 4 (`ml_inference` — Modelo 1 + Modelo 2).
+
+`track_dbt_test_health` (auditoria de rigor científico, 30/07/2026): roda logo
+após `dbt_build`, reimplementando as condições dos testes WARN (que nunca
+bloqueiam o build) e gravando contagem+timestamp em
+`iceberg.audit.dbt_test_warnings_historico` — ver `src/dbt_test_health.py`
+pro motivo de reimplementar em vez de ler os artefatos do dbt. Não faz parte
+da cadeia `outlets=[GOLD_READY_DATASET]` (isso continua disparado só por
+`dbt_build`, sem esperar essa task de auditoria).
 """
 
 import os
 import sys
 from datetime import datetime, timedelta
 
-from airflow.decorators import dag
+from airflow.decorators import dag, task
 from airflow.providers.docker.operators.docker import DockerOperator
 
 # Garante `dags`/`src` importáveis sob o parsing isolado do Airflow.
@@ -53,7 +61,7 @@ default_args = {
     tags=["gold", "dbt", "trino", "iceberg", "fase-2"],
 )
 def gold_load():
-    DockerOperator(
+    dbt_build = DockerOperator(
         task_id="dbt_build",
         image="datalab-dbt:local",
         # ENTRYPOINT da imagem é `dbt`; o comando abaixo vira `dbt build`.
@@ -65,6 +73,14 @@ def gold_load():
         mount_tmp_dir=False,
         outlets=[GOLD_READY_DATASET],
     )
+
+    @task
+    def track_dbt_test_health():
+        from src.dbt_test_health import run
+
+        return run(persist=True)
+
+    dbt_build >> track_dbt_test_health()
 
 
 gold_load()

@@ -18,8 +18,20 @@ que existe na Gold:
     padrão, ex: "3.3.90.18" — mais fiel ao pedido do enunciado do que a
     modalidade de contratação usada quando o proxy era `fato_empenho`; one-hot
     das mais frequentes)
-  - ano eleitoral -> `ano % 2 == 0` (simplificação: no Brasil todo ano par tem
-    eleição, municipal ou estadual/federal, alternando)
+  - ano eleitoral -> `ano_alvo % 2 == 0` (simplificação: no Brasil todo ano par
+    tem eleição, municipal ou estadual/federal, alternando), onde `ano_alvo` é
+    o ano do trimestre PREVISTO (`target_proximo_trimestre`), não o ano da
+    linha atual — ver "BUG corrigido" abaixo.
+
+BUG corrigido (30/07/2026, auditoria de rigor científico de ML/DS):
+`flag_ano_eleitoral` era calculada sobre `panel["ano"]` (o ano da linha, isto
+é, do trimestre CONHECIDO usado como feature) em vez do ano do trimestre
+PREVISTO. Para toda linha de trimestre=4, o alvo é T1 do ano seguinte — um
+ano diferente, de paridade eleitoral potencialmente invertida. Ou seja, 25%
+das linhas (todas as transições Q4->Q1, que cruzam virada de ano) recebiam
+um viés sistemático nessa feature, não ruído aleatório: exatamente o tipo de
+erro que uma auditoria de rigor científico precisa pegar antes de confiar no
+modelo. Corrigido: a flag agora usa o ano de `_next_quarter(ano, trimestre)`.
 
 BUG corrigido (25/07/2026, achado comparando com o script independente da
 Fernanda, dona da Fase 3/ML — ela chegou no mesmo problema por outro caminho,
@@ -49,6 +61,26 @@ grid pequeno, escolhendo pelo pinball loss médio (a métrica correta pra
 regressão por quantil — MAE só avalia a mediana, ignora se p10/p90 estão bem
 calibrados). Chamado a cada `run()`, antes do treino final; os resultados de
 cada combinação testada vão pro MLflow junto com a escolhida.
+
+BUG corrigido (30/07/2026, auditoria de rigor científico): a busca de
+hiperparâmetros usava os últimos `N_FOLDS_TUNING` trimestres como folds de
+validação — mas `evaluate()` (chamado logo depois, com os hiperparâmetros já
+escolhidos) usa esse MESMO último trimestre como "holdout final". Ou seja, o
+dado que deveria validar a escolha de forma independente já tinha influenciado
+essa escolha (via a média dos folds no tuning) — vazamento clássico de seleção
+de modelo, que infla a métrica reportada de um jeito difícil de quantificar.
+Corrigido: `time_series_splits(..., excluir_ultimo_trimestre=True)` no tuning
+remove o trimestre mais recente da grade ANTES de montar os folds, reservando-o
+só pra `evaluate()`. `tune_hyperparameters()` também loga a cobertura do
+intervalo por fold (não só o pinball loss usado pra escolher) — uma única
+cobertura "perto de 80%" num trimestre isolado (876 linhas, todas do mesmo
+período, não são 876 amostras independentes) não é evidência forte de boa
+calibração; ver a consistência entre vários folds é.
+
+Gate de qualidade (mesma auditoria): `COBERTURA_MIN/MAX_ACEITAVEL` — se o
+holdout final sair muito fora do nominal ~80%, `run()` loga ERROR + marca
+`alerta_qualidade` no MLflow (não bloqueia o pipeline, não há canal de
+alerta automatizado no projeto — mas fica visível pra quem for auditar).
 
 Uso: python -m models.payment_forecast
 """
@@ -96,6 +128,15 @@ HYPERPARAM_GRID: list[dict] = [
 ]
 
 N_FOLDS_TUNING = 4
+
+# Faixa aceitável de cobertura do intervalo [p10,p90] (nominal ~80%) no
+# holdout final — fora disso, os quantis provavelmente estão mal calibrados
+# neste treino específico (gate de qualidade, auditoria de 30/07/2026). Sem
+# canal de alerta automatizado (Slack/e-mail) nesse projeto, então isso não
+# bloqueia o pipeline — só loga em nível ERROR + marca uma tag no MLflow,
+# visível pra quem for auditar antes de confiar na previsão.
+COBERTURA_MIN_ACEITAVEL = 0.5
+COBERTURA_MAX_ACEITAVEL = 0.98
 
 PAGAMENTO_QUERY = """
 SELECT
@@ -214,7 +255,11 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     panel["valor_contratado_ativo"] = _valor_contratado_ativo_por_org(
         contratos, panel[["codigo_orgao", "ano", "trimestre"]]
     )
-    panel["flag_ano_eleitoral"] = (panel["ano"] % 2 == 0).astype(int)
+    # Ano do trimestre PREVISTO, não da linha atual (ver "BUG corrigido" no
+    # topo do módulo) — equivalente vetorizado de aplicar `_next_quarter` linha
+    # a linha: só trimestre=4 empurra o ano-alvo pro ano seguinte.
+    ano_alvo = panel["ano"] + (panel["trimestre"] == 4).astype(int)
+    panel["flag_ano_eleitoral"] = (ano_alvo % 2 == 0).astype(int)
 
     grouped = panel.groupby("codigo_orgao")["valor_trimestre"]
     panel["lag_1_trimestre"] = grouped.shift(1)
@@ -318,19 +363,39 @@ def _pinball_loss(y_true: pd.Series, y_pred: pd.Series, quantile: float) -> floa
     return float((delta.clip(lower=0) * quantile + (-delta).clip(lower=0) * (1 - quantile)).mean())
 
 
-def time_series_splits(panel: pd.DataFrame, X: pd.DataFrame, n_folds: int = N_FOLDS_TUNING) -> list[tuple]:
+def _cobertura_intervalo(y_true: pd.Series, preds: pd.DataFrame) -> float:
+    """% de linhas onde o valor real cai dentro de [p10, p90] — deveria rondar
+    80% (o intervalo é nominal ~80% de confiança) se os quantis estiverem bem
+    calibrados. Mesma fórmula usada em `evaluate()`, reaproveitada por fold em
+    `tune_hyperparameters()`."""
+    return float(((y_true >= preds["p10"]) & (y_true <= preds["p90"])).mean())
+
+
+def time_series_splits(
+    panel: pd.DataFrame, X: pd.DataFrame, n_folds: int = N_FOLDS_TUNING, excluir_ultimo_trimestre: bool = False
+) -> list[tuple]:
     """Validação cruzada walk-forward: cada fold valida UM trimestre inteiro
     (todas as linhas daquele ano/trimestre com alvo conhecido), treinando só
     com linhas de trimestres estritamente anteriores — sem vazamento
     temporal (nenhum fold treina com dado "do futuro" em relação ao que
     valida). Os últimos `n_folds` trimestres com alvo conhecido viram os
-    folds de validação; o resto de cada um vira o treino daquele fold."""
+    folds de validação; o resto de cada um vira o treino daquele fold.
+
+    `excluir_ultimo_trimestre=True` (usado por `tune_hyperparameters`, ver
+    docstring lá) remove o trimestre mais recente ANTES de montar os folds —
+    corrige um vazamento real (auditoria de 30/07/2026): sem isso, o mesmo
+    trimestre que vira "holdout final" em `evaluate()` também entrava como
+    um dos folds de seleção de hiperparâmetros, inflando artificialmente a
+    métrica reportada como se fosse validação independente."""
     y = panel.loc[X.index, "target_proximo_trimestre"]
     known_mask = y.notna()
 
     quarters = panel.loc[X.index, ["ano", "trimestre"]]
     quarters_with_target = quarters[known_mask].drop_duplicates().sort_values(["ano", "trimestre"])
-    fold_quarters = list(quarters_with_target.itertuples(index=False, name=None))[-n_folds:]
+    quarter_list = list(quarters_with_target.itertuples(index=False, name=None))
+    if excluir_ultimo_trimestre and quarter_list:
+        quarter_list = quarter_list[:-1]
+    fold_quarters = quarter_list[-n_folds:]
 
     folds = []
     for ano_q, trimestre_q in fold_quarters:
@@ -356,8 +421,20 @@ def tune_hyperparameters(
     """Busca de hiperparâmetros com validação cruzada temporal (ver
     `time_series_splits`) — escolhe pelo pinball loss médio (folds × quantis).
     Retorna os hiperparâmetros vencedores e o log de todas as tentativas
-    (pra registrar no MLflow, permitindo auditar a escolha depois)."""
-    folds = time_series_splits(panel, X, n_folds=n_folds)
+    (pra registrar no MLflow, permitindo auditar a escolha depois).
+
+    Usa `excluir_ultimo_trimestre=True`: o trimestre mais recente com alvo
+    conhecido NUNCA entra como fold de tuning, porque `run()` reserva
+    exatamente esse trimestre pra `evaluate()` reportar como holdout "final".
+    Sem essa exclusão, o mesmo dado influenciaria a escolha de hiperparâmetros
+    E a métrica que supostamente valida essa escolha de forma independente —
+    vazamento que inflava artificialmente a cobertura reportada (achado da
+    auditoria de rigor científico de 30/07/2026).
+
+    Também registra, por fold, a cobertura do intervalo [p10,p90] (não só o
+    pinball loss) — permite checar se a calibração ~80% se sustenta em vários
+    períodos históricos, não só no trimestre único que `evaluate()` reporta."""
+    folds = time_series_splits(panel, X, n_folds=n_folds, excluir_ultimo_trimestre=True)
     if not folds:
         logger.warning("Sem folds de validação temporal suficientes — mantendo hiperparâmetros padrão")
         return dict(DEFAULT_HYPERPARAMS), []
@@ -365,14 +442,21 @@ def tune_hyperparameters(
     trials: list[dict] = []
     for params in grid:
         fold_losses = []
+        fold_coberturas = []
         for train_idx, valid_idx in folds:
             models = train_models(X.loc[train_idx], y.loc[train_idx], quantiles=quantiles, hyperparams=params)
             preds = predict_quantiles(models, X.loc[valid_idx])
             y_valid = y.loc[valid_idx]
+            fold_coberturas.append(_cobertura_intervalo(y_valid, preds))
             loss = sum(_pinball_loss(y_valid, preds[f"p{int(q * 100)}"], q) for q in quantiles) / len(quantiles)
             fold_losses.append(loss)
         trials.append(
-            {**params, "pinball_loss_medio": sum(fold_losses) / len(fold_losses), "n_folds": len(fold_losses)}
+            {
+                **params,
+                "pinball_loss_medio": sum(fold_losses) / len(fold_losses),
+                "n_folds": len(fold_losses),
+                "coberturas_por_fold": fold_coberturas,
+            }
         )
 
     melhor = min(trials, key=lambda t: t["pinball_loss_medio"])
@@ -475,6 +559,18 @@ def run(persist: bool = True) -> pd.DataFrame:
         for i, trial in enumerate(trials):
             mlflow.log_metric(f"tuning_trial_{i}_pinball_loss", trial["pinball_loss_medio"])
 
+        # Cobertura por fold da combinação VENCEDORA — valida calibração em
+        # vários trimestres históricos, não só no holdout único de `evaluate()`
+        # abaixo (achado da auditoria de 30/07/2026: uma única cobertura
+        # "perto de 80%" pode ser coincidência de um trimestre específico;
+        # olhar a consistência entre folds é evidência mais forte).
+        melhor_trial = min(trials, key=lambda t: t["pinball_loss_medio"]) if trials else {}
+        coberturas_por_fold = melhor_trial.get("coberturas_por_fold", [])
+        for i, cobertura_fold in enumerate(coberturas_por_fold):
+            mlflow.log_metric(f"tuning_fold_{i}_cobertura_intervalo", cobertura_fold)
+        if len(coberturas_por_fold) > 1:
+            mlflow.log_metric("tuning_cobertura_desvio_padrao_entre_folds", float(pd.Series(coberturas_por_fold).std()))
+
         mlflow.log_params(
             {
                 "quantiles": QUANTILES,
@@ -501,9 +597,22 @@ def run(persist: bool = True) -> pd.DataFrame:
             )
 
         # holdout = último trimestre com alvo conhecido, já com os hiperparâmetros vencedores
+        # (reservado do tuning acima via excluir_ultimo_trimestre=True — nunca
+        # usado pra escolher hiperparâmetros, então é validação de verdade)
         metrics = evaluate(panel, X, hyperparams=melhor_params)
         if metrics:
             mlflow.log_metrics(metrics)
+            cobertura = metrics["cobertura_intervalo_80pct"]
+            if not (COBERTURA_MIN_ACEITAVEL <= cobertura <= COBERTURA_MAX_ACEITAVEL):
+                logger.error(
+                    "ALERTA DE QUALIDADE: cobertura do intervalo no holdout (%.1f%%) fora da faixa "
+                    "aceitável [%.0f%%, %.0f%%] — os quantis deste treino provavelmente estão mal "
+                    "calibrados. Revisar antes de confiar nas previsões gravadas.",
+                    cobertura * 100,
+                    COBERTURA_MIN_ACEITAVEL * 100,
+                    COBERTURA_MAX_ACEITAVEL * 100,
+                )
+                mlflow.set_tag("alerta_qualidade", "cobertura_fora_da_faixa_aceitavel")
 
         train_idx = X.index[y.notna()]
         models = train_models(X.loc[train_idx], y.loc[train_idx], hyperparams=melhor_params)

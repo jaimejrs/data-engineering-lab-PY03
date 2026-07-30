@@ -85,10 +85,27 @@ class TestBuildQuarterlyPanel:
         # Contrato vigente 2024-01-01 a 2025-12-31 cobre todos os 8 trimestres do fixture.
         assert (panel["valor_contratado_ativo"] == 100_000.0).all()
 
-    def test_flag_ano_eleitoral(self):
+    def test_flag_ano_eleitoral_reflects_target_quarter_year_not_current_row_year(self):
+        """Prova a correção do bug (30/07/2026, auditoria de rigor científico):
+        a flag precisa refletir o ano do trimestre PREVISTO, não da linha atual.
+        Em trimestre=4 o alvo é T1 do ano seguinte — um ano diferente, de
+        paridade eleitoral possivelmente invertida. Antes da correção, essa
+        transição (25% das linhas) carregava o valor errado."""
         panel = pf.build_quarterly_panel(_pagamentos_df(anos=(2024, 2025)), _contratos_df())
-        assert panel.loc[panel["ano"] == 2024, "flag_ano_eleitoral"].eq(1).all()
-        assert panel.loc[panel["ano"] == 2025, "flag_ano_eleitoral"].eq(0).all()
+
+        # 2024 (par): T1-T3 ainda preveem dentro de 2024 (par) -> flag=1.
+        linhas_2024 = panel[(panel["ano"] == 2024) & (panel["trimestre"] < 4)]
+        assert linhas_2024["flag_ano_eleitoral"].eq(1).all()
+        # 2024-T4 prevê 2025-T1 (ímpar) -> flag=0, não 1.
+        linha_2024_t4 = panel[(panel["ano"] == 2024) & (panel["trimestre"] == 4)]
+        assert linha_2024_t4["flag_ano_eleitoral"].eq(0).all()
+
+        # 2025 (ímpar): T1-T3 ainda preveem dentro de 2025 (ímpar) -> flag=0.
+        linhas_2025 = panel[(panel["ano"] == 2025) & (panel["trimestre"] < 4)]
+        assert linhas_2025["flag_ano_eleitoral"].eq(0).all()
+        # 2025-T4 prevê 2026-T1 (par) -> flag=1, não 0.
+        linha_2025_t4 = panel[(panel["ano"] == 2025) & (panel["trimestre"] == 4)]
+        assert linha_2025_t4["flag_ano_eleitoral"].eq(1).all()
 
     def test_lag_4_trimestres_has_real_value_across_year_boundary(self):
         """Prova a correção do bug: agrupar por `codigo_orgao` (estável) em vez
@@ -190,6 +207,72 @@ class TestTrainAndPredict:
         assert "mae_mediana" in metrics
         assert "cobertura_intervalo_80pct" in metrics
         assert metrics["mae_mediana"] >= 0
+
+
+class TestTimeSeriesSplitsAndTuning:
+    """Cobre time_series_splits/tune_hyperparameters — sem teste dedicado antes
+    da auditoria de rigor científico de 30/07/2026, que encontrou o vazamento
+    corrigido aqui: o trimestre usado por evaluate() como holdout final não
+    pode aparecer como fold de validação do tuning."""
+
+    def _panel_X_y(self, orgaos=("A", "B")):
+        panel = pf.build_quarterly_panel(_pagamentos_df(orgaos=orgaos), _contratos_df(orgaos=orgaos))
+        X = pf.build_feature_matrix(panel)
+        y = panel.loc[X.index, "target_proximo_trimestre"]
+        return panel, X, y
+
+    def test_folds_never_train_on_data_from_the_validation_quarter_or_later(self):
+        panel, X, _y = self._panel_X_y()
+        folds = pf.time_series_splits(panel, X, n_folds=3)
+        assert folds  # a fixture tem trimestre suficiente pra gerar folds
+        for train_idx, valid_idx in folds:
+            valid_quarters = panel.loc[valid_idx, ["ano", "trimestre"]].drop_duplicates()
+            assert len(valid_quarters) == 1  # cada fold valida um único trimestre inteiro
+            ano_v, trimestre_v = valid_quarters.iloc[0][["ano", "trimestre"]]
+
+            train_quarters = panel.loc[train_idx, ["ano", "trimestre"]]
+            treino_nao_e_anterior = (train_quarters["ano"] > ano_v) | (
+                (train_quarters["ano"] == ano_v) & (train_quarters["trimestre"] >= trimestre_v)
+            )
+            assert not treino_nao_e_anterior.any()
+
+    def test_excluir_ultimo_trimestre_reserva_o_trimestre_mais_recente(self):
+        panel, X, _y = self._panel_X_y()
+        com_ultimo = pf.time_series_splits(panel, X, n_folds=1, excluir_ultimo_trimestre=False)
+        sem_ultimo = pf.time_series_splits(panel, X, n_folds=1, excluir_ultimo_trimestre=True)
+
+        quarter_com = panel.loc[com_ultimo[0][1], ["ano", "trimestre"]].apply(tuple, axis=1).iloc[0]
+        quarter_sem = panel.loc[sem_ultimo[0][1], ["ano", "trimestre"]].apply(tuple, axis=1).iloc[0]
+
+        assert quarter_sem != quarter_com
+        assert quarter_sem < quarter_com  # estritamente anterior
+
+    def test_tuning_fold_nunca_e_o_mesmo_trimestre_do_holdout_final_de_evaluate(self):
+        """Prova a correção do vazamento (item crítico da auditoria): o
+        trimestre que `evaluate()` usa como holdout final nunca pode ter sido
+        um fold de validação durante a busca de hiperparâmetros."""
+        panel, X, y = self._panel_X_y()
+
+        known = X.index[y.notna()]
+        holdout_evaluate = panel.loc[known, ["ano", "trimestre"]].apply(tuple, axis=1).max()
+
+        _melhor_params, trials = pf.tune_hyperparameters(panel, X, y, n_folds=2)
+        assert trials
+
+        folds_do_tuning = pf.time_series_splits(panel, X, n_folds=2, excluir_ultimo_trimestre=True)
+        quarters_usados_no_tuning = {
+            panel.loc[valid_idx, ["ano", "trimestre"]].apply(tuple, axis=1).iloc[0] for _, valid_idx in folds_do_tuning
+        }
+        assert holdout_evaluate not in quarters_usados_no_tuning
+
+    def test_tune_hyperparameters_retorna_combinacao_do_grid_com_cobertura_por_fold(self):
+        panel, X, y = self._panel_X_y()
+        melhor_params, trials = pf.tune_hyperparameters(panel, X, y, n_folds=2)
+
+        assert set(melhor_params) == {"n_estimators", "max_depth", "learning_rate"}
+        assert any(all(t[k] == v for k, v in melhor_params.items()) for t in trials)
+        assert all("coberturas_por_fold" in t and t["coberturas_por_fold"] for t in trials)
+        assert all(0.0 <= c <= 1.0 for t in trials for c in t["coberturas_por_fold"])
 
 
 class TestSaveLoadModel:

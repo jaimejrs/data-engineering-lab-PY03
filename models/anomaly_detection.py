@@ -54,6 +54,23 @@ Hiperparâmetros (revisão de 30/07/2026, docs/06-analise-critica.md):
     400 — dobra o custo de treino em troca de uma redução real na variância
     de quem aparece como prioridade de revisão.
 
+Gate de qualidade em produção (auditoria de rigor científico, 30/07/2026):
+sem rótulo não dá pra medir acurácia, mas dá pra detectar sinais de que algo
+quebrou no pipeline:
+  - Distribuição degenerada: se `score_p50 == score_p99`, o modelo não está
+    discriminando NENHUM contrato neste treino (ex: feature matrix quebrada,
+    todas as linhas idênticas) — sinal de que o score inteiro da execução não
+    é confiável.
+  - Deriva vs. execução anterior: `score_medio` costuma variar pouco entre
+    re-treinos sobre dados parecidos (~0,165-0,168 nas últimas execuções
+    reais). Uma mudança grande demais (`DRIFT_SCORE_MEDIO_MAX_ACEITAVEL`)
+    sinaliza possível regressão a montante (bug de feature, mudança não
+    intencional nos dados de entrada) — consultado ANTES de sobrescrever
+    `SCORE_TABLE`, comparado contra a média que estava valendo em produção.
+Nenhum dos dois bloqueia o pipeline (sem canal de alerta automatizado nesse
+projeto) — só logam ERROR + marcam uma tag no MLflow, visível pra quem for
+auditar antes de confiar no score desta execução.
+
 Uso: python -m models.anomaly_detection [--contamination auto]
 """
 
@@ -205,6 +222,10 @@ def flag_anomalia(model: IsolationForest, X: pd.DataFrame) -> pd.Series:
 # (ver docstring do módulo, seção "Desbalanceamento").
 SCORE_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)
 
+# Gate de qualidade (ver docstring do módulo) — mudança máxima aceitável no
+# score médio entre esta execução e a anterior antes de logar um alerta.
+DRIFT_SCORE_MEDIO_MAX_ACEITAVEL = 0.15
+
 
 def summarize_score_distribution(resultado: pd.DataFrame) -> dict[str, float]:
     """Percentis do score + contagem/percentual de contratos acima de cada
@@ -277,6 +298,20 @@ def write_scores(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) ->
     logger.info("Gravados %s scores em %s", len(payload), SCORE_TABLE)
 
 
+def _score_medio_execucao_anterior() -> float | None:
+    """Média do `score_anomalia` gravado em produção ANTES desta execução
+    sobrescrever `SCORE_TABLE` — usada pelo gate de deriva (ver docstring do
+    módulo). `None` na 1ª execução (tabela ainda não existe) ou se a consulta
+    falhar por qualquer motivo — nesse caso o gate simplesmente não roda."""
+    try:
+        df = trino_io.query(f"SELECT AVG(score_anomalia) AS media FROM {SCORE_TABLE}")
+    except Exception:
+        return None
+    if df.empty or pd.isna(df.iloc[0]["media"]):
+        return None
+    return float(df.iloc[0]["media"])
+
+
 def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFrame:
     """Extrai features da Gold/Silver, treina, escora e (por padrão) grava o
     resultado em `SCORE_TABLE` para `fato_contrato` pegar no próximo `dbt build`.
@@ -286,6 +321,10 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
     ao longo do tempo (ex: se o score médio mudar muito de um dia pro outro).
     """
     configure_mlflow(MLFLOW_EXPERIMENT)
+    # Consultado ANTES de sobrescrever SCORE_TABLE (ver write_scores/
+    # replace_table) — é a média que estava valendo em produção até agora,
+    # usada pelo gate de deriva logo abaixo.
+    score_medio_anterior = _score_medio_execucao_anterior()
     with mlflow.start_run(run_name=f"{MODEL_VERSION}_{pd.Timestamp.utcnow():%Y%m%d_%H%M%S}"):
         raw = extract_features()
         X = build_feature_matrix(raw)
@@ -337,6 +376,39 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
             int(resultado["flag_anomalia"].sum()),
             resultado["flag_anomalia"].mean() * 100,
         )
+
+        # Gate de qualidade 1: distribuição degenerada (ver docstring do módulo).
+        if distribuicao["score_p50"] == distribuicao["score_p99"]:
+            logger.error(
+                "ALERTA DE QUALIDADE: distribuição do score degenerada (p50 == p99 == %.4f) — "
+                "o modelo não está discriminando contratos neste treino. Não confiar no score "
+                "desta execução.",
+                distribuicao["score_p50"],
+            )
+            mlflow.set_tag("alerta_qualidade", "distribuicao_degenerada")
+
+        # Gate de qualidade 2: deriva grande demais vs. a execução anterior.
+        score_medio_novo = float(resultado["score_anomalia"].mean())
+        if score_medio_anterior is not None:
+            diferenca = abs(score_medio_novo - score_medio_anterior)
+            mlflow.log_metrics(
+                {
+                    "score_medio_execucao_anterior": score_medio_anterior,
+                    "score_medio_diferenca_vs_execucao_anterior": diferenca,
+                }
+            )
+            if diferenca > DRIFT_SCORE_MEDIO_MAX_ACEITAVEL:
+                logger.error(
+                    "ALERTA DE QUALIDADE: score médio mudou %.4f -> %.4f (diferença %.4f, acima do "
+                    "limite aceitável %.2f) — possível regressão no pipeline de features ou nos "
+                    "dados de entrada. Revisar antes de confiar nesta execução.",
+                    score_medio_anterior,
+                    score_medio_novo,
+                    diferenca,
+                    DRIFT_SCORE_MEDIO_MAX_ACEITAVEL,
+                )
+                mlflow.set_tag("alerta_qualidade", "drift_score_medio")
+
         if persist:
             write_scores(resultado)
         mlflow.log_artifact(ARTIFACT_PATH)

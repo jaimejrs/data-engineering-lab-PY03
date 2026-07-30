@@ -68,7 +68,9 @@ def render(
             df_anom_ia = run_query(query_anomalias_ia)
             df_prev_ia = run_query(query_previsoes_ia)
             try:
-                st.session_state["relatorio_ia_texto"] = gerar_relatorio_ia(df_anom_ia, df_prev_ia)
+                texto, valores_suspeitos = gerar_relatorio_ia(df_anom_ia, df_prev_ia)
+                st.session_state["relatorio_ia_texto"] = texto
+                st.session_state["relatorio_ia_valores_suspeitos"] = valores_suspeitos
                 filtro_txt = []
                 if anos_selecionados:
                     filtro_txt.append("ano " + ", ".join(str(a) for a in anos_selecionados))
@@ -86,4 +88,14 @@ def render(
     if "relatorio_ia_texto" in st.session_state:
         st.divider()
         st.caption(st.session_state.get("relatorio_ia_meta", ""))
+        valores_suspeitos = st.session_state.get("relatorio_ia_valores_suspeitos", [])
+        if valores_suspeitos:
+            valores_fmt = ", ".join(
+                f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") for v in valores_suspeitos
+            )
+            st.warning(
+                f"⚠️ {len(valores_suspeitos)} valor(es) neste relatório não batem com nenhum número "
+                f"calculado pelos modelos: {valores_fmt}. Confira antes de usar — pode ser um erro "
+                "de arredondamento do texto ou um valor que a IA calculou por conta própria."
+            )
         st.markdown(escapar_cifrao_markdown(st.session_state["relatorio_ia_texto"]))

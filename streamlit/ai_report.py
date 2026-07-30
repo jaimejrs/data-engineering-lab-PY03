@@ -3,9 +3,20 @@
 Mesmo padrão do models/narrative_report.py do pipeline principal: o LLM só
 reescreve/traduz números já calculados, nunca recebe dado bruto nem infere
 valor novo (evita alucinação).
+
+Verificação pós-geração (auditoria de rigor científico, 30/07/2026): o prompt
+já instrui "não invente números", mas a chamada roda com `temperature=0.3`
+(não 0) e não havia nenhum passo automatizado conferindo se o texto gerado
+bate com os números realmente fornecidos. `_valores_nao_verificados()` extrai
+todo valor em R$ do texto e confere contra o conjunto de valores injetados no
+prompt — duplicado (não importado) de `src/report_validation.py`, que tem a
+mesma lógica pro pipeline principal: este painel tem build context Docker
+próprio (`streamlit/Dockerfile`, `COPY . .` só do diretório `streamlit/`) e
+não enxerga `src/`.
 """
 
 import os
+import re
 
 import pandas as pd
 from formatting import fmt_reais
@@ -14,6 +25,25 @@ from openai import OpenAI
 import streamlit as st
 
 OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
+
+_RE_VALOR_REAIS = re.compile(r"R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)")
+_TOLERANCIA_RELATIVA = 0.005
+
+
+def _parse_valor_brl(texto: str) -> float:
+    return float(texto.replace(".", "").replace(",", "."))
+
+
+def _valores_nao_verificados(texto: str, valores_permitidos: set[float]) -> list[float]:
+    """Valores em R$ do texto gerado que não correspondem (dentro de
+    `_TOLERANCIA_RELATIVA`) a nenhum valor realmente fornecido ao LLM — ver
+    docstring do módulo."""
+    encontrados = [_parse_valor_brl(m) for m in _RE_VALOR_REAIS.findall(texto)]
+    return [
+        v
+        for v in encontrados
+        if not any(abs(v - p) <= _TOLERANCIA_RELATIVA * max(abs(p), 1.0) for p in valores_permitidos)
+    ]
 
 
 def build_prompt(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> tuple[str, str]:
@@ -92,7 +122,21 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def gerar_relatorio_ia(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> str:
+def _valores_permitidos(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> set[float]:
+    """Todo valor numérico realmente injetado no prompt (ver `build_prompt`)."""
+    permitidos: set[float] = set()
+    if not anomalias.empty:
+        permitidos.update(float(v) for v in anomalias["valor_contrato"].dropna())
+    if not previsoes.empty:
+        for coluna in ("valor_previsto_p10", "valor_previsto_p50", "valor_previsto_p90"):
+            permitidos.update(float(v) for v in previsoes[coluna].dropna())
+    return permitidos
+
+
+def gerar_relatorio_ia(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> tuple[str, list[float]]:
+    """Retorna `(texto_markdown, valores_suspeitos)` — `valores_suspeitos` são
+    valores em R$ do texto gerado que não bateram com nenhum número fornecido
+    ao LLM (ver docstring do módulo); vazio quando nada suspeito foi encontrado."""
     system_prompt, user_prompt = build_prompt(anomalias, previsoes)
     client = get_openai_client()
     model = os.getenv("OPENAI_MODEL", OPENAI_MODEL_DEFAULT)
@@ -105,4 +149,6 @@ def gerar_relatorio_ia(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> str:
         ],
         temperature=0.3,
     )
-    return resposta.choices[0].message.content
+    texto = resposta.choices[0].message.content
+    suspeitos = _valores_nao_verificados(texto, _valores_permitidos(anomalias, previsoes))
+    return texto, suspeitos

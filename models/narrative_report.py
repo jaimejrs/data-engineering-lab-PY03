@@ -15,6 +15,16 @@ O relatório é gravado em dois lugares:
     `models/artifacts/relatorios/`, já coberto por `models/artifacts/` no
     `.gitignore`) — para abrir e ler direto, sem precisar consultar o Trino.
 
+Verificação pós-geração (auditoria de rigor científico, 30/07/2026): o prompt
+já instruía "não invente números", mas `generate_narrative()` roda com
+`temperature=0.3` (não 0) e não havia NENHUM passo automatizado conferindo se
+o texto gerado realmente bate com os números fornecidos — um relatório que
+alimenta decisão de gestor público não pode depender só da promessa do LLM.
+`src/report_validation.valores_nao_verificados()` extrai todo valor em R$ do
+texto e confere contra o conjunto de valores realmente injetados no prompt;
+divergências viram log ERROR e ficam gravadas em `REPORT_TABLE`
+(`num_valores_suspeitos`), visíveis pra quem for auditar antes de publicar.
+
 Uso: python -m models.narrative_report [--top-anomalias 10] [--top-previsoes 10]
 """
 
@@ -29,6 +39,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from src import trino_io
+from src.report_validation import valores_nao_verificados
 
 load_dotenv()
 
@@ -196,10 +207,16 @@ def write_report_metadata(
     num_anomalias: int,
     num_previsoes: int,
     llm_model: str,
+    num_valores_suspeitos: int = 0,
     model_version: str = MODEL_VERSION,
 ) -> None:
     """Grava o relatório (texto completo + metadados) em `REPORT_TABLE` — mesmo
-    padrão de `replace_table` usado por `write_scores`/`write_forecasts`."""
+    padrão de `replace_table` usado por `write_scores`/`write_forecasts`.
+
+    `num_valores_suspeitos` (ver `valores_nao_verificados` no topo do módulo):
+    quantos valores em R$ do texto gerado não bateram com nenhum número
+    realmente fornecido ao LLM — fica gravado pra dar pra auditar histórico de
+    relatórios com possível alucinação, não só o mais recente."""
     payload = pd.DataFrame(
         [
             {
@@ -208,6 +225,7 @@ def write_report_metadata(
                 "model_version": model_version,
                 "num_contratos_anomalos": int(num_anomalias),
                 "num_orgaos_previstos": int(num_previsoes),
+                "num_valores_suspeitos": int(num_valores_suspeitos),
                 "conteudo_markdown": conteudo,
             }
         ]
@@ -223,12 +241,26 @@ def write_report_metadata(
                 model_version varchar,
                 num_contratos_anomalos integer,
                 num_orgaos_previstos integer,
+                num_valores_suspeitos integer,
                 conteudo_markdown varchar
             )
         """,
         casts={"gerado_em": "TIMESTAMP"},
     )
     logger.info("Metadados do relatório gravados em %s", REPORT_TABLE)
+
+
+def _valores_permitidos(anomalias: pd.DataFrame, previsoes: pd.DataFrame) -> set[float]:
+    """Todo valor numérico realmente injetado no prompt (ver `build_prompt`) —
+    a referência contra a qual `valores_nao_verificados` confere o texto
+    gerado. Mudou o prompt? Mudar aqui também."""
+    permitidos: set[float] = set()
+    if not anomalias.empty:
+        permitidos.update(float(v) for v in anomalias["valor_contrato"].dropna())
+    if not previsoes.empty:
+        for coluna in ("valor_previsto_p10", "valor_previsto_p50", "valor_previsto_p90"):
+            permitidos.update(float(v) for v in previsoes[coluna].dropna())
+    return permitidos
 
 
 def run(top_anomalias: int = 10, top_previsoes: int = 10, persist: bool = True) -> str:
@@ -239,13 +271,25 @@ def run(top_anomalias: int = 10, top_previsoes: int = 10, persist: bool = True) 
     gerado_em = datetime.now(timezone.utc)
     save_report_file(conteudo, gerado_em)
 
+    suspeitos = valores_nao_verificados(conteudo, _valores_permitidos(anomalias, previsoes))
+    if suspeitos:
+        logger.error(
+            "ALERTA DE QUALIDADE: relatório narrativo contém %s valor(es) em R$ que não batem com "
+            "nenhum número fornecido ao modelo — possível alucinação, revisar antes de publicar: %s",
+            len(suspeitos),
+            suspeitos,
+        )
+
     logger.info(
-        "Relatório narrativo gerado: %s contratos atípicos, %s previsões de órgão",
+        "Relatório narrativo gerado: %s contratos atípicos, %s previsões de órgão, %s valor(es) suspeito(s)",
         len(anomalias),
         len(previsoes),
+        len(suspeitos),
     )
     if persist:
-        write_report_metadata(conteudo, gerado_em, len(anomalias), len(previsoes), OPENAI_MODEL)
+        write_report_metadata(
+            conteudo, gerado_em, len(anomalias), len(previsoes), OPENAI_MODEL, num_valores_suspeitos=len(suspeitos)
+        )
     return conteudo
 
 

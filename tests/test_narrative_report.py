@@ -122,6 +122,33 @@ class TestWriteReportMetadata:
         assert df.iloc[0]["num_orgaos_previstos"] == 3
         assert df.iloc[0]["llm_model"] == "gpt-4o-mini"
         assert df.iloc[0]["conteudo_markdown"] == "# Relatório"
+        assert df.iloc[0]["num_valores_suspeitos"] == 0  # default quando não passado
+
+    def test_records_num_valores_suspeitos_when_provided(self):
+        gerado_em = datetime(2026, 7, 24, 12, 0, 0, tzinfo=timezone.utc)
+        with patch.object(nr.trino_io, "replace_table") as mock_replace:
+            nr.write_report_metadata(
+                conteudo="# Relatório",
+                gerado_em=gerado_em,
+                num_anomalias=2,
+                num_previsoes=3,
+                llm_model="gpt-4o-mini",
+                num_valores_suspeitos=2,
+            )
+        df = mock_replace.call_args.kwargs["df"]
+        assert df.iloc[0]["num_valores_suspeitos"] == 2
+
+
+class TestValoresPermitidos:
+    def test_collects_contract_and_forecast_values(self):
+        permitidos = nr._valores_permitidos(_anomalias_df(), _previsoes_df())
+        assert 5_000_000.0 in permitidos
+        assert 1_200_000.0 in permitidos
+        assert 1_000_000.0 in permitidos  # valor_previsto_p50
+        assert 900_000.0 in permitidos  # valor_previsto_p10
+
+    def test_handles_empty_dataframes(self):
+        assert nr._valores_permitidos(pd.DataFrame(), pd.DataFrame()) == set()
 
 
 class TestQueries:
@@ -161,3 +188,33 @@ class TestRun:
             nr.run(persist=False)
 
         mock_write.assert_not_called()
+
+    def test_run_flags_hallucinated_value_not_present_in_source_data(self, tmp_path, caplog):
+        """Auditoria de rigor científico (30/07/2026): um valor em R$ que o
+        LLM "inventou" (não está em nenhuma das duas fontes) precisa aparecer
+        como suspeito e ser gravado, não passar em silêncio."""
+        texto_com_alucinacao = "# Relatório\nO total previsto é de R$ 999.999.999,99 no próximo trimestre."
+        with (
+            patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()),
+            patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()),
+            patch.object(nr, "generate_narrative", return_value=texto_com_alucinacao),
+            patch.object(nr, "REPORT_DIR", str(tmp_path)),
+            patch.object(nr, "write_report_metadata") as mock_write,
+        ):
+            nr.run()
+
+        assert mock_write.call_args.kwargs["num_valores_suspeitos"] == 1
+        assert any("ALERTA DE QUALIDADE" in r.message for r in caplog.records)
+
+    def test_run_does_not_flag_values_that_match_source_data(self, tmp_path):
+        texto_legitimo = "# Relatório\nO contrato de maior atipicidade soma R$ 5.000.000,00."
+        with (
+            patch.object(nr, "extract_top_anomalias", return_value=_anomalias_df()),
+            patch.object(nr, "extract_top_previsoes", return_value=_previsoes_df()),
+            patch.object(nr, "generate_narrative", return_value=texto_legitimo),
+            patch.object(nr, "REPORT_DIR", str(tmp_path)),
+            patch.object(nr, "write_report_metadata") as mock_write,
+        ):
+            nr.run()
+
+        assert mock_write.call_args.kwargs["num_valores_suspeitos"] == 0

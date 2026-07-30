@@ -175,7 +175,7 @@ class TestFeatureQuery:
 class TestRunMlflowTracking:
     """`run()` não deve tocar Trino/MLflow/disco real nos testes — tudo mockado."""
 
-    def _patched_run(self, tmp_path, **run_kwargs):
+    def _patched_run(self, tmp_path, score_medio_anterior=None, **run_kwargs):
         raw = _raw_df(n=10)
         with (
             patch.object(anomaly_detection, "extract_features", return_value=raw),
@@ -183,6 +183,9 @@ class TestRunMlflowTracking:
             patch.object(anomaly_detection, "configure_mlflow") as mock_configure,
             patch.object(anomaly_detection, "mlflow") as mock_mlflow,
             patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+            # Sem isso, run() chamaria trino_io.query de verdade (1ª execução
+            # simulada por padrão: None, sem execução anterior pra comparar).
+            patch.object(anomaly_detection, "_score_medio_execucao_anterior", return_value=score_medio_anterior),
         ):
             resultado = anomaly_detection.run(**run_kwargs)
         return resultado, mock_write, mock_configure, mock_mlflow
@@ -227,3 +230,71 @@ class TestRunMlflowTracking:
 
         mock_write.assert_not_called()
         mock_mlflow.log_artifact.assert_called_once()
+
+    def test_gate_alerta_distribuicao_degenerada(self, tmp_path):
+        """Gate de qualidade (auditoria de 30/07/2026): p50 == p99 significa
+        que o modelo não discriminou NENHUM contrato neste treino."""
+        raw = _raw_df(n=10)
+        scores_constantes = pd.Series([0.5] * len(raw), name="score_anomalia")
+        with (
+            patch.object(anomaly_detection, "extract_features", return_value=raw),
+            patch.object(anomaly_detection, "score_anomalia", return_value=scores_constantes),
+            patch.object(anomaly_detection, "write_scores"),
+            patch.object(anomaly_detection, "configure_mlflow"),
+            patch.object(anomaly_detection, "mlflow") as mock_mlflow,
+            patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+            patch.object(anomaly_detection, "_score_medio_execucao_anterior", return_value=None),
+        ):
+            anomaly_detection.run()
+        tags = [c.args for c in mock_mlflow.set_tag.call_args_list]
+        assert ("alerta_qualidade", "distribuicao_degenerada") in tags
+
+    def test_gate_alerta_drift_score_medio_quando_diferenca_grande(self, tmp_path):
+        """Gate de qualidade: mudança grande no score médio vs. a execução
+        anterior (consultada de SCORE_TABLE antes do replace_table) dispara
+        alerta — sinal de possível regressão a montante."""
+        raw = _raw_df(n=10)
+        scores_variados = pd.Series([i / 10 for i in range(10)], name="score_anomalia")  # média = 0.45
+        with (
+            patch.object(anomaly_detection, "extract_features", return_value=raw),
+            patch.object(anomaly_detection, "score_anomalia", return_value=scores_variados),
+            patch.object(anomaly_detection, "write_scores"),
+            patch.object(anomaly_detection, "configure_mlflow"),
+            patch.object(anomaly_detection, "mlflow") as mock_mlflow,
+            patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+            patch.object(anomaly_detection, "_score_medio_execucao_anterior", return_value=0.90),
+        ):
+            anomaly_detection.run()
+        tags = [c.args for c in mock_mlflow.set_tag.call_args_list]
+        assert ("alerta_qualidade", "drift_score_medio") in tags
+
+    def test_gate_sem_alerta_quando_score_medio_estavel(self, tmp_path):
+        raw = _raw_df(n=10)
+        scores_variados = pd.Series([i / 10 for i in range(10)], name="score_anomalia")  # média = 0.45
+        with (
+            patch.object(anomaly_detection, "extract_features", return_value=raw),
+            patch.object(anomaly_detection, "score_anomalia", return_value=scores_variados),
+            patch.object(anomaly_detection, "write_scores"),
+            patch.object(anomaly_detection, "configure_mlflow"),
+            patch.object(anomaly_detection, "mlflow") as mock_mlflow,
+            patch.object(anomaly_detection, "ARTIFACT_PATH", str(tmp_path / "model.joblib")),
+            patch.object(anomaly_detection, "_score_medio_execucao_anterior", return_value=0.40),
+        ):
+            anomaly_detection.run()
+        tags = [c.args for c in mock_mlflow.set_tag.call_args_list]
+        assert ("alerta_qualidade", "drift_score_medio") not in tags
+        assert ("alerta_qualidade", "distribuicao_degenerada") not in tags
+
+
+class TestScoreMedioExecucaoAnterior:
+    def test_returns_none_when_table_does_not_exist_yet(self):
+        with patch.object(anomaly_detection.trino_io, "query", side_effect=Exception("table not found")):
+            assert anomaly_detection._score_medio_execucao_anterior() is None
+
+    def test_returns_none_when_result_is_empty_or_null(self):
+        with patch.object(anomaly_detection.trino_io, "query", return_value=pd.DataFrame({"media": [None]})):
+            assert anomaly_detection._score_medio_execucao_anterior() is None
+
+    def test_returns_the_average_when_available(self):
+        with patch.object(anomaly_detection.trino_io, "query", return_value=pd.DataFrame({"media": [0.1647]})):
+            assert anomaly_detection._score_medio_execucao_anterior() == pytest.approx(0.1647)

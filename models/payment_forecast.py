@@ -82,6 +82,17 @@ holdout final sair muito fora do nominal ~80%, `run()` loga ERROR + marca
 `alerta_qualidade` no MLflow (não bloqueia o pipeline, não há canal de
 alerta automatizado no projeto — mas fica visível pra quem for auditar).
 
+Previsão retroativa (30/07/2026, pedido explícito): além da previsão real
+(`forecast_next_quarter`, só pra órgãos cujo próximo trimestre ainda não tem
+dado), `forecast_quarters_backtest()` gera previsão pros últimos
+`N_BACKTEST_QUARTERS` trimestres que JÁ FECHARAM — treinando só com dado
+anterior a cada um (mesma lógica de `time_series_splits`, sem vazamento). As
+duas previsões são gravadas juntas em `FORECAST_TABLE`, marcadas por
+`is_backtest`; como cobrem órgãos mutuamente exclusivos (alvo desconhecido
+vs. já conhecido), somam cobertura sem se sobrepor. É isso que permite o
+painel (`streamlit/tabs/previsao.py`) mostrar "previsto vs. realizado" pra
+trimestres já fechados, sem esperar um novo fechar.
+
 Uso: python -m models.payment_forecast
 """
 
@@ -137,6 +148,15 @@ N_FOLDS_TUNING = 4
 # visível pra quem for auditar antes de confiar na previsão.
 COBERTURA_MIN_ACEITAVEL = 0.5
 COBERTURA_MAX_ACEITAVEL = 0.98
+
+# Quantos trimestres já fechados (com dado real conhecido) recebem previsão
+# RETROATIVA gravada junto com a previsão real de verdade — dá pra comparar
+# "o que o modelo teria previsto" com o que aconteceu, sem esperar um novo
+# trimestre fechar (pedido explícito, 30/07/2026). Sempre os últimos
+# `N_BACKTEST_QUARTERS` com alvo conhecido — hoje (dado até 2026-T2) são
+# 2026-T1 e 2026-T2; avança sozinho conforme a Gold recebe trimestres novos,
+# não é uma data fixa no código. Ver `forecast_quarters_backtest`.
+N_BACKTEST_QUARTERS = 2
 
 PAGAMENTO_QUERY = """
 SELECT
@@ -488,6 +508,60 @@ def forecast_next_quarter(panel: pd.DataFrame, X: pd.DataFrame, models: dict[flo
     return resultado.reset_index(drop=True)
 
 
+def forecast_quarters_backtest(
+    panel: pd.DataFrame,
+    X: pd.DataFrame,
+    y: pd.Series,
+    hyperparams: dict,
+    n_quarters: int = N_BACKTEST_QUARTERS,
+    quantiles: tuple[float, ...] = QUANTILES,
+) -> pd.DataFrame:
+    """Previsão RETROATIVA (backtest) pros `n_quarters` trimestres mais
+    recentes que JÁ têm alvo real conhecido (pedido explícito: comparar
+    previsto vs. realizado sem esperar um trimestre novo fechar). Reusa
+    `time_series_splits` (sem excluir_ultimo_trimestre — aqui é justamente o
+    trimestre mais recente que interessa) pra treinar cada previsão só com
+    dado estritamente anterior ao trimestre-alvo, sem vazamento: não é o
+    modelo final "espiando" quem ganhou de olho no futuro, é o que o modelo
+    teria previsto se rodasse naquela época, com os hiperparâmetros já
+    escolhidos por `tune_hyperparameters`.
+
+    Mesmo formato de `forecast_next_quarter`, com uma diferença: aqui
+    `ano_previsto`/`trimestre_previsto` JÁ têm valor real disponível (é assim
+    que dá pra comparar) — o de baixo é o único caminho pra órgãos cujo
+    alvo é DESCONHECIDO. As duas previsões nunca se sobrepõem no mesmo
+    órgão/trimestre (uma exige alvo nulo, a outra exige alvo conhecido)."""
+    folds = time_series_splits(panel, X, n_folds=n_quarters)
+    resultados = []
+    for train_idx, valid_idx in folds:
+        models = train_models(X.loc[train_idx], y.loc[train_idx], quantiles=quantiles, hyperparams=hyperparams)
+        preds = predict_quantiles(models, X.loc[valid_idx])
+
+        linhas = panel.loc[valid_idx, ["codigo_orgao", "nome_orgao", "ano", "trimestre"]].copy()
+        linhas[["ano_previsto", "trimestre_previsto"]] = linhas.apply(
+            lambda r: pd.Series(_next_quarter(int(r["ano"]), int(r["trimestre"]))), axis=1
+        )
+        linhas["valor_previsto_p10"] = preds["p10"].values
+        linhas["valor_previsto_p50"] = preds["p50"].values
+        linhas["valor_previsto_p90"] = preds["p90"].values
+        resultados.append(linhas)
+
+    colunas = [
+        "codigo_orgao",
+        "nome_orgao",
+        "ano",
+        "trimestre",
+        "ano_previsto",
+        "trimestre_previsto",
+        "valor_previsto_p10",
+        "valor_previsto_p50",
+        "valor_previsto_p90",
+    ]
+    if not resultados:
+        return pd.DataFrame(columns=colunas).drop(columns=["ano", "trimestre"])
+    return pd.concat(resultados, ignore_index=True).drop(columns=["ano", "trimestre"])
+
+
 def save_model(models: dict[float, XGBRegressor], feature_columns: list[str], path: str = ARTIFACT_PATH) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     joblib.dump({"models": models, "feature_columns": feature_columns}, path)
@@ -500,6 +574,10 @@ def load_model(path: str = ARTIFACT_PATH) -> tuple[dict[float, XGBRegressor], li
 
 
 def write_forecasts(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) -> None:
+    """`resultado` precisa ter `is_backtest` (bool): False para a previsão real
+    (`forecast_next_quarter`, alvo desconhecido), True para a retroativa
+    (`forecast_quarters_backtest`, alvo já conhecido — ver constante
+    `N_BACKTEST_QUARTERS`)."""
     payload = resultado[
         [
             "codigo_orgao",
@@ -509,28 +587,38 @@ def write_forecasts(resultado: pd.DataFrame, model_version: str = MODEL_VERSION)
             "valor_previsto_p10",
             "valor_previsto_p50",
             "valor_previsto_p90",
+            "is_backtest",
         ]
     ].copy()
     payload["model_version"] = model_version
     payload["scored_at"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
+    ddl = f"""
+        CREATE TABLE IF NOT EXISTS {FORECAST_TABLE} (
+            codigo_orgao varchar,
+            nome_orgao varchar,
+            ano_previsto integer,
+            trimestre_previsto integer,
+            valor_previsto_p10 double,
+            valor_previsto_p50 double,
+            valor_previsto_p90 double,
+            is_backtest boolean,
+            model_version varchar,
+            scored_at timestamp
+        )
+    """
+    # `is_backtest` (30/07/2026) é coluna nova — `CREATE TABLE IF NOT EXISTS`
+    # dentro de `replace_table` só cobre ambiente do zero; ambiente com a
+    # tabela já criada antes desta mudança precisa do ADD COLUMN explícito
+    # (idempotente) antes do replace_table (mesmo padrão de `write_scores`
+    # em models/anomaly_detection.py, pra `flag_anomalia`).
+    trino_io.execute(f"ALTER TABLE IF EXISTS {FORECAST_TABLE} ADD COLUMN IF NOT EXISTS is_backtest boolean")
+
     trino_io.replace_table(
         table=FORECAST_TABLE,
         df=payload,
         columns=list(payload.columns),
-        ddl=f"""
-            CREATE TABLE IF NOT EXISTS {FORECAST_TABLE} (
-                codigo_orgao varchar,
-                nome_orgao varchar,
-                ano_previsto integer,
-                trimestre_previsto integer,
-                valor_previsto_p10 double,
-                valor_previsto_p50 double,
-                valor_previsto_p90 double,
-                model_version varchar,
-                scored_at timestamp
-            )
-        """,
+        ddl=ddl,
         casts={"scored_at": "TIMESTAMP"},
     )
     logger.info("Gravadas %s previsões em %s", len(payload), FORECAST_TABLE)
@@ -619,14 +707,28 @@ def run(persist: bool = True) -> pd.DataFrame:
         save_model(models, list(X.columns))
 
         resultado = forecast_next_quarter(panel, X, models)
+        resultado["is_backtest"] = False
+
+        # Previsão retroativa (backtest) pros últimos N_BACKTEST_QUARTERS
+        # trimestres já fechados — treina só com hiperparâmetros vencedores +
+        # dado anterior a cada trimestre-alvo (ver docstring da função), pra
+        # dar pra comparar previsto vs. realizado sem esperar um novo
+        # trimestre fechar (pedido explícito, 30/07/2026).
+        resultado_backtest = forecast_quarters_backtest(panel, X, y, melhor_params)
+        resultado_backtest["is_backtest"] = True
+
         mlflow.log_metric("n_orgaos_previstos", float(len(resultado)))
+        mlflow.log_metric("n_linhas_previsao_retroativa", float(len(resultado_backtest)))
         logger.info(
-            "Previsão concluída: %s órgãos, mae_mediana(holdout)=%s",
+            "Previsão concluída: %s órgãos (previsão real, alvo desconhecido), %s linhas de previsão "
+            "retroativa (últimos %s trimestres fechados), mae_mediana(holdout)=%s",
             len(resultado),
+            len(resultado_backtest),
+            N_BACKTEST_QUARTERS,
             metrics.get("mae_mediana"),
         )
         if persist:
-            write_forecasts(resultado)
+            write_forecasts(pd.concat([resultado, resultado_backtest], ignore_index=True))
         mlflow.log_artifact(ARTIFACT_PATH)
     return resultado
 

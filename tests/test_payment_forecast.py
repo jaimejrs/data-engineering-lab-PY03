@@ -275,6 +275,95 @@ class TestTimeSeriesSplitsAndTuning:
         assert all(0.0 <= c <= 1.0 for t in trials for c in t["coberturas_por_fold"])
 
 
+class TestForecastQuartersBacktest:
+    """Previsão retroativa (30/07/2026, pedido explícito): comparar previsto
+    vs. realizado em trimestres já fechados, sem esperar um novo fechar."""
+
+    def _panel_X_y(self, orgaos=("A", "B")):
+        panel = pf.build_quarterly_panel(_pagamentos_df(orgaos=orgaos), _contratos_df(orgaos=orgaos))
+        X = pf.build_feature_matrix(panel)
+        y = panel.loc[X.index, "target_proximo_trimestre"]
+        return panel, X, y
+
+    def test_covers_only_target_quarters_with_known_value(self):
+        panel, X, y = self._panel_X_y()
+        resultado = pf.forecast_quarters_backtest(panel, X, y, pf.DEFAULT_HYPERPARAMS, n_quarters=2)
+
+        assert not resultado.empty
+        alvos = set(zip(resultado["ano_previsto"], resultado["trimestre_previsto"], strict=False))
+        conhecidos = panel.loc[panel["target_proximo_trimestre"].notna(), ["ano", "trimestre"]]
+        alvos_com_valor_real = {
+            pf._next_quarter(int(a), int(t)) for a, t in zip(conhecidos["ano"], conhecidos["trimestre"], strict=False)
+        }
+        assert alvos <= alvos_com_valor_real
+
+    def test_predictions_are_monotonic_and_non_negative(self):
+        panel, X, y = self._panel_X_y()
+        resultado = pf.forecast_quarters_backtest(panel, X, y, pf.DEFAULT_HYPERPARAMS, n_quarters=2)
+        assert (resultado["valor_previsto_p10"] <= resultado["valor_previsto_p50"]).all()
+        assert (resultado["valor_previsto_p50"] <= resultado["valor_previsto_p90"]).all()
+        assert (resultado["valor_previsto_p10"] >= 0).all()
+
+    def test_never_overlaps_with_forward_forecast_targets(self):
+        """As duas previsões (real e retroativa) nunca preveem o mesmo
+        órgão+trimestre — uma exige alvo desconhecido, a outra exige
+        conhecido (ver docstring de forecast_quarters_backtest)."""
+        panel, X, y = self._panel_X_y()
+        train_idx = X.index[y.notna()]
+        models = pf.train_models(X.loc[train_idx], y.loc[train_idx])
+        forward = pf.forecast_next_quarter(panel, X, models)
+        backtest = pf.forecast_quarters_backtest(panel, X, y, pf.DEFAULT_HYPERPARAMS, n_quarters=2)
+
+        chaves_forward = set(
+            zip(forward["codigo_orgao"], forward["ano_previsto"], forward["trimestre_previsto"], strict=False)
+        )
+        chaves_backtest = set(
+            zip(backtest["codigo_orgao"], backtest["ano_previsto"], backtest["trimestre_previsto"], strict=False)
+        )
+        assert chaves_forward.isdisjoint(chaves_backtest)
+
+    def test_returns_empty_dataframe_with_expected_columns_when_no_folds(self):
+        panel, X, y = self._panel_X_y()
+        with patch.object(pf, "time_series_splits", return_value=[]):
+            resultado = pf.forecast_quarters_backtest(panel, X, y, pf.DEFAULT_HYPERPARAMS, n_quarters=2)
+        assert resultado.empty
+        assert set(resultado.columns) == {
+            "codigo_orgao",
+            "nome_orgao",
+            "ano_previsto",
+            "trimestre_previsto",
+            "valor_previsto_p10",
+            "valor_previsto_p50",
+            "valor_previsto_p90",
+        }
+
+
+class TestWriteForecasts:
+    def test_adds_is_backtest_column_via_alter_table_before_replace(self):
+        resultado = pd.DataFrame(
+            {
+                "codigo_orgao": ["01"],
+                "nome_orgao": ["Órgão Teste"],
+                "ano_previsto": [2026],
+                "trimestre_previsto": [3],
+                "valor_previsto_p10": [100.0],
+                "valor_previsto_p50": [200.0],
+                "valor_previsto_p90": [300.0],
+                "is_backtest": [False],
+            }
+        )
+        with (
+            patch.object(pf.trino_io, "execute") as mock_execute,
+            patch.object(pf.trino_io, "replace_table") as mock_replace,
+        ):
+            pf.write_forecasts(resultado)
+
+        alter_sql = mock_execute.call_args[0][0]
+        assert "ADD COLUMN IF NOT EXISTS is_backtest" in alter_sql
+        assert "is_backtest" in mock_replace.call_args.kwargs["columns"]
+        assert "is_backtest" in mock_replace.call_args.kwargs["df"].columns
+
+
 class TestSaveLoadModel:
     def test_round_trips_models_and_feature_columns(self, tmp_path):
         panel = pf.build_quarterly_panel(_pagamentos_df(orgaos=("A", "B")), _contratos_df(orgaos=("A", "B")))

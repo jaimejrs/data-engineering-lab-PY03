@@ -19,6 +19,14 @@ baixa). Por isso todo trimestre com previsão mostra sua cobertura (nº de
 "previsto" de um trimestre de baixa cobertura contra o "real" do governo
 inteiro sub-representa o modelo por um fator de dezenas a centenas de vezes.
 
+Previsão retroativa (30/07/2026, pedido explícito): além da previsão real
+(pro próximo trimestre de cada órgão, alvo desconhecido), `models/payment_
+forecast.py` também grava previsão retroativa pros últimos trimestres que já
+fecharam (treinada só com dado anterior a cada um, sem vazamento — ver
+`forecast_quarters_backtest`). É isso que permite comparar "previsto vs.
+realizado" nesta aba mesmo pra trimestres que já têm dado real, sem esperar
+um novo fechar.
+
 `render()` retorna (ano_ref, trimestre_detalhe) — a aba "Resumo (IA)"
 reaproveita essa mesma referência.
 """
@@ -103,11 +111,12 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
             return 0.0
         return prev_map[t][3] / total_orgaos_universo
 
-    # --- Gráfico único: barra "Pago (real)" onde existe, "Previsto" (com
-    # intervalo P10-P90) onde existe — os dois juntos no mesmo trimestre
-    # quando os dois existem. Trimestres com previsão de baixa cobertura
-    # (poucos órgãos) ficam com um hachurado + aviso no hover, em vez de
-    # aparecer como se fosse a previsão do governo inteiro.
+    # --- Gráfico único: barra "Pago (real)" e "Previsto" SOBREPOSTAS no mesmo
+    # trimestre (barmode="overlay" + opacidade), não lado a lado — dá pra ver
+    # as duas mesmo quando uma é maior que a outra, sem a barra menor sumir
+    # atrás da maior. Trimestres com previsão de baixa cobertura (poucos
+    # órgãos) ficam com um hachurado + aviso no hover, em vez de aparecer
+    # como se fosse a previsão do governo inteiro.
     fig = go.Figure()
     labels = [f"T{t}" for t in trimestres]
 
@@ -117,6 +126,7 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         x=labels,
         y=reais,
         marker_color=COR_PAGO,
+        opacity=0.75,
         hovertemplate="%{x}<br>Pago (real): R$ %{y:,.0f}<extra></extra>",
     )
 
@@ -130,13 +140,15 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         x=labels,
         y=previstos_p50,
         marker_color=COR_PREVISTO,
+        opacity=0.75,
         marker_pattern_shape=pattern_shape,
         error_y=dict(type="data", symmetric=False, array=erro_mais, arrayminus=erro_menos),
         customdata=n_orgaos_txt,
         hovertemplate="%{x}<br>Previsto (mediana): R$ %{y:,.0f}<br>Cobertura: %{customdata}<extra></extra>",
     )
     fig.update_layout(
-        barmode="group",
+        barmode="overlay",
+        bargap=0.35,
         title=f"Pago vs. Previsto por trimestre — {ano_ref}",
         xaxis_title="Trimestre",
         yaxis_title="Valor (R$)",
@@ -144,7 +156,8 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        "Barras hachuradas = previsão de baixa cobertura (poucos órgãos com histórico recente o "
+        "Barras sobrepostas (semitransparentes) para comparar diretamente real e previsto no mesmo "
+        "trimestre. Hachura = previsão de baixa cobertura (poucos órgãos com histórico recente o "
         "suficiente para gerar previsão nesse trimestre) — passe o mouse para ver a cobertura exata."
     )
 

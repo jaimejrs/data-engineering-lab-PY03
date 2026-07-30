@@ -84,14 +84,25 @@ orgaos_selecionados = st.sidebar.multiselect(
 )
 
 st.sidebar.divider()
-score_threshold = st.sidebar.slider(
-    "Score mínimo de anomalia",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.7,
-    step=0.05,
-    help="Contratos com score_anomalia acima deste valor são considerados na aba de Anomalias.",
+score_pct_top = st.sidebar.slider(
+    "Sensibilidade — % de contratos mais atípicos a revisar",
+    min_value=1,
+    max_value=50,
+    value=10,
+    step=1,
+    help=(
+        "O score de anomalia é recalculado a cada novo treinamento do modelo (o Isolation "
+        "Forest reescala min-max sobre o lote inteiro) — um valor absoluto como '0,70' não "
+        "significa a mesma coisa de uma rodada de treino para outra. Definir por percentual "
+        "mantém o significado estável: '10%' sempre mostra os 10% contratos mais atípicos do "
+        "lote mais recente, seja qual for a forma da distribuição do score desta vez."
+    ),
 )
+df_score_cutoff = run_query(
+    f"SELECT approx_percentile(score_anomalia, {1 - score_pct_top / 100}) AS cutoff "
+    "FROM iceberg.ml.score_anomalia_contrato"
+)
+score_threshold = float(df_score_cutoff.iloc[0]["cutoff"]) if not df_score_cutoff.empty else 0.7
 
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo_ceara.png")
 

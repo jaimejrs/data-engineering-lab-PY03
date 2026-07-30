@@ -8,4 +8,8 @@ plotly>=5.20
 trino==0.328.0
 pandas==2.2.2
 openai==1.51.0
+# httpx<0.28: openai==1.51.0 repassa `proxies=` ao criar o httpx.Client interno;
+# httpx>=0.28 removeu esse kwarg -> "Client.__init__() got an unexpected
+# keyword argument 'proxies'" ao instanciar OpenAI() (erro visto na aba Resumo IA).
+httpx<0.28
 python-dotenv==1.0.1

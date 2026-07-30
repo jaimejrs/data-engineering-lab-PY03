@@ -68,38 +68,32 @@ anos_disponiveis = load_anos()
 orgaos_df = load_orgaos()
 
 # ---------------------------------------------------------------------------
-# Sidebar - filtros globais
+# Sidebar - filtros globais (seleção única, não multiseleção)
 # ---------------------------------------------------------------------------
 st.sidebar.title("Filtros")
 
-anos_selecionados = st.sidebar.multiselect(
+ano_selecionado = st.sidebar.selectbox(
     "Ano",
     options=anos_disponiveis,
-    default=anos_disponiveis[:1] if anos_disponiveis else [],
+    index=0 if anos_disponiveis else None,
 )
+anos_selecionados = [ano_selecionado] if ano_selecionado is not None else []
 
-orgaos_selecionados = st.sidebar.multiselect(
-    "Órgão (opcional)",
-    options=orgaos_df["nome"].tolist(),
+TODOS_ORGAOS = "Todos os órgãos"
+orgao_selecionado = st.sidebar.selectbox(
+    "Órgão",
+    options=[TODOS_ORGAOS] + orgaos_df["nome"].tolist(),
 )
+orgaos_selecionados = [] if orgao_selecionado == TODOS_ORGAOS else [orgao_selecionado]
 
-st.sidebar.divider()
-score_pct_top = st.sidebar.slider(
-    "Sensibilidade — % de contratos mais atípicos a revisar",
-    min_value=1,
-    max_value=50,
-    value=10,
-    step=1,
-    help=(
-        "O score de anomalia é recalculado a cada novo treinamento do modelo (o Isolation "
-        "Forest reescala min-max sobre o lote inteiro) — um valor absoluto como '0,70' não "
-        "significa a mesma coisa de uma rodada de treino para outra. Definir por percentual "
-        "mantém o significado estável: '10%' sempre mostra os 10% contratos mais atípicos do "
-        "lote mais recente, seja qual for a forma da distribuição do score desta vez."
-    ),
-)
+# Sensibilidade do score de anomalia: percentual fixo (não exposto como
+# filtro) — ver models/anomaly_detection.py: o score é reescalado min-max a
+# cada novo treino, então um percentual (sempre "os X% mais atípicos do lote
+# atual") é mais estável que um valor de corte absoluto, mas não precisa ser
+# ajustável pelo usuário do painel.
+SCORE_PCT_TOP_PADRAO = 10
 df_score_cutoff = run_query(
-    f"SELECT approx_percentile(score_anomalia, {1 - score_pct_top / 100}) AS cutoff "
+    f"SELECT approx_percentile(score_anomalia, {1 - SCORE_PCT_TOP_PADRAO / 100}) AS cutoff "
     "FROM iceberg.ml.score_anomalia_contrato"
 )
 score_threshold = float(df_score_cutoff.iloc[0]["cutoff"]) if not df_score_cutoff.empty else 0.7
@@ -112,19 +106,6 @@ with col_titulo_app:
 with col_logo_app:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, use_container_width=True)
-
-with st.expander("ℹ️ Sobre os dados — limitações conhecidas"):
-    st.markdown(
-        "- **Contrato × Empenho/Ordem Bancária**: a ligação entre um contrato e seus "
-        "empenhos/ordens bancárias (`num_spu` × `cod_contrato`) é *best-effort* — bate em só "
-        "~7-8% dos casos na fonte original. Os valores empenhado/pago mostrados aqui vêm "
-        "diretamente do próprio contrato (já calculados pela API de origem), não de uma soma "
-        "reconciliada linha a linha com as tabelas de empenho/ordem bancária.\n"
-        "- **Aproveitamento acima de 100%**: pode ocorrer quando o valor pago já reflete "
-        "aditivo ou ajuste contratual posterior ao valor originalmente empenhado.\n"
-        "- **Score de anomalia**: sinal estatístico (Isolation Forest, não supervisionado) "
-        "para priorizar revisão humana — não é, por si só, indício de irregularidade."
-    )
 
 tab_geral, tab_previsao, tab_anomalias, tab_resumo = st.tabs(
     ["Visão Geral", "Previsão de Pagamentos", "Anomalias em Contratos", "Resumo (IA)"]

@@ -1,10 +1,10 @@
 """CSS institucional do painel (verde/amarelo, inspirado no site da CGE).
 
 Testids/atributos usados abaixo (stMetric, stTabs, stDataFrame, stExpander,
-stButton, stSlider, stHeader, stSidebar, data-baseweb=*) foram conferidos
-contra o bundle da versão do Streamlit instalada (`static/static/js/*.js`),
-não só copiados de exemplos genéricos — evita regra "morta" (silenciosamente
-sem efeito) por mudança de versão.
+stButton, stHeader, stSidebar, data-baseweb=*) foram conferidos contra o
+bundle da versão do Streamlit instalada (`static/static/js/*.js`), não só
+copiados de exemplos genéricos — evita regra "morta" (silenciosamente sem
+efeito) por mudança de versão.
 """
 
 import streamlit as st
@@ -20,8 +20,11 @@ html, body, [class*="css"] {
     background-color: #F5F8F6;
 }
 
+/* A barra superior (stHeader) é fixa/sobreposta ao conteúdo — precisa de
+   padding-top suficiente pra não cobrir o título/logo abaixo dela. Um valor
+   pequeno aqui (ex: 1.5rem) deixa a barra verde por cima do topo da página. */
 .block-container {
-    padding-top: 1.5rem;
+    padding-top: 5rem;
     padding-bottom: 3rem;
 }
 
@@ -52,22 +55,21 @@ section[data-testid="stSidebar"] .stMarkdown,
 section[data-testid="stSidebar"] span {
     color: #FFFFFF !important;
 }
-/* Só o valor já selecionado (visível na caixa fechada) do dropdown fica
-   branco — e só dentro da sidebar. A lista de opções, que abre por cima do
-   conteúdo principal com fundo branco, não é afetada. Aplicar isso no app
-   inteiro (como antes) deixava os selects da área principal com texto
-   branco sobre fundo branco — invisível. */
+/* Caixa do dropdown em branco com texto escuro — contraste garantido contra
+   o fundo verde escuro da sidebar, em vez de tentar forçar texto claro por
+   cima do verde (frágil: qualquer elemento interno do baseweb que escape da
+   regra vira texto escuro invisível sobre fundo escuro, exatamente o defeito
+   relatado). Só dentro da sidebar; a lista de opções, que abre por cima do
+   conteúdo principal, não é afetada. */
+section[data-testid="stSidebar"] div[data-baseweb="select"] {
+    background-color: #FFFFFF;
+    border-radius: 8px;
+}
 section[data-testid="stSidebar"] div[data-baseweb="select"] * {
-    color: #FFFFFF !important;
+    color: #16281F !important;
 }
 section[data-testid="stSidebar"] hr {
     border-color: rgba(255, 255, 255, 0.25);
-}
-/* Trilho ativo e alça do slider (score de anomalia) em âmbar — não o azul
-   padrão do tema, que destoa da paleta institucional. */
-section[data-testid="stSidebar"] div[data-testid="stSlider"] [role="slider"] {
-    background-color: #F5B301 !important;
-    border-color: #F5B301 !important;
 }
 
 /* ---------- Abas ---------- */
@@ -128,10 +130,12 @@ div[data-testid="stPlotlyChart"] {
 div[data-testid="stButton"] button[kind="primary"] {
     background-color: #00693E;
     border-color: #00693E;
+    color: #FFFFFF !important;
 }
 div[data-testid="stButton"] button[kind="primary"]:hover {
     background-color: #00522F;
     border-color: #00522F;
+    color: #FFFFFF !important;
 }
 
 /* ---------- Divisores ---------- */

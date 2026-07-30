@@ -5,12 +5,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import streamlit as st
 import trino
 from dotenv import load_dotenv
 from openai import OpenAI
 
+import streamlit as st
 
 _ROOT_ENV = Path(__file__).resolve().parent.parent / ".env"
 _LOCAL_ENV = Path(__file__).resolve().parent / ".env"
@@ -18,7 +17,7 @@ load_dotenv(_ROOT_ENV)
 load_dotenv(_LOCAL_ENV, override=True)
 
 # ---------------------------------------------------------------------------
-# Configuração de conexão 
+# Configuração de conexão
 # ---------------------------------------------------------------------------
 HOST = os.getenv("TRINO_HOST", "100.69.31.14")
 PORT = int(os.getenv("TRINO_PORT", "8085"))
@@ -119,7 +118,7 @@ def formatar_bilhoes(valor: float) -> str:
     return f"R$ {texto} bi"
 
 
-# Paleta institucional 
+# Paleta institucional
 COR_PAGO = "#1B8A3D"
 COR_EMPENHADO = "#F5B301"
 COR_PREVISTO = "#E74C3C"
@@ -391,9 +390,7 @@ with tab_geral:
             var_name="tipo",
             value_name="valor",
         )
-        df_mensal_long["tipo"] = df_mensal_long["tipo"].map(
-            {"valor_pago": "Pago", "valor_empenhado": "Empenhado"}
-        )
+        df_mensal_long["tipo"] = df_mensal_long["tipo"].map({"valor_pago": "Pago", "valor_empenhado": "Empenhado"})
 
         fig_mensal = px.line(
             df_mensal_long,
@@ -437,9 +434,7 @@ with tab_geral:
             df_aproveitamento["aproveitamento_pct"] = (
                 df_aproveitamento["total_pago"] / df_aproveitamento["total_empenhado"] * 100
             )
-            top5_aproveitamento = df_aproveitamento.sort_values(
-                "aproveitamento_pct", ascending=False
-            ).head(5)
+            top5_aproveitamento = df_aproveitamento.sort_values("aproveitamento_pct", ascending=False).head(5)
 
             col_titulo, col_select = st.columns([2, 1])
 
@@ -453,9 +448,7 @@ with tab_geral:
             with col_titulo:
                 st.subheader(orgao_escolhido)
 
-            linha_orgao = top5_aproveitamento[
-                top5_aproveitamento["nome_orgao"] == orgao_escolhido
-            ].iloc[0]
+            linha_orgao = top5_aproveitamento[top5_aproveitamento["nome_orgao"] == orgao_escolhido].iloc[0]
 
             nome_escapado = orgao_escolhido.replace("'", "''")
             query_evolucao_orgao = f"""
@@ -574,9 +567,7 @@ with tab_anomalias:
         df_medio_alto = df_anom[df_anom["faixa_risco"].isin([FAIXA_MEDIO, FAIXA_ALTO])]
 
         valor_anomalos = df_medio_alto["valor_contrato"].sum()
-        pct_valor_anomalo = (
-            (valor_anomalos / valor_total_contratos * 100) if valor_total_contratos else 0
-        )
+        pct_valor_anomalo = (valor_anomalos / valor_total_contratos * 100) if valor_total_contratos else 0
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(
@@ -725,7 +716,7 @@ with tab_previsao:
     df_prev_tri = run_query(query_previsto_trimestre)
 
     real_map = (
-        dict(zip(df_emp_tri["trimestre"], df_emp_tri["valor_pago_trimestre"]))
+        dict(zip(df_emp_tri["trimestre"], df_emp_tri["valor_pago_trimestre"], strict=False))
         if not df_emp_tri.empty
         else {}
     )
@@ -849,7 +840,7 @@ with tab_previsao:
     """
     df_previsto_todos = run_query(query_previsto_todos)
     previsto_map = (
-        dict(zip(df_previsto_todos["trimestre_previsto"], df_previsto_todos["p50"]))
+        dict(zip(df_previsto_todos["trimestre_previsto"], df_previsto_todos["p50"], strict=False))
         if not df_previsto_todos.empty
         else {}
     )
@@ -861,11 +852,7 @@ with tab_previsao:
         df_full = pd.DataFrame(
             {
                 "trimestre": [f"T{t}" for t in trimestres_disponiveis for _ in range(2)],
-                "valor": [
-                    v
-                    for t in trimestres_disponiveis
-                    for v in (real_map.get(t, 0), previsto_map.get(t, 0))
-                ],
+                "valor": [v for t in trimestres_disponiveis for v in (real_map.get(t, 0), previsto_map.get(t, 0))],
                 "tipo": ["Pago", "Previsto"] * len(trimestres_disponiveis),
             }
         )

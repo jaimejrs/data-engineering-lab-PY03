@@ -19,17 +19,22 @@ CORTE_TOP5_APROVEITAMENTO = 100_000_000
 LIMIAR_MES_INCOMPLETO = 0.5
 
 
-def _cortar_cauda_incompleta(df: pd.DataFrame, coluna_contagem: str = "n_registros") -> tuple[pd.DataFrame, int]:
-    """Remove os últimos meses cuja contagem de registros esteja abaixo de
-    `LIMIAR_MES_INCOMPLETO` da mediana da série — evita plotar como "queda"
-    um mês que a fonte ainda não terminou de publicar. Só corta a PONTA final
-    (mantém qualquer oscilação real no meio da série intacta). Retorna
-    (df cortado, nº de meses removidos)."""
+def _ultimo_periodo_completo(df: pd.DataFrame, coluna_contagem: str = "n_registros") -> tuple[int, int] | None:
+    """Acha o último período (ano, mês) da série cuja contagem de registros
+    não esteja abaixo de `LIMIAR_MES_INCOMPLETO` da mediana — sinal de que a
+    fonte ainda não tem o mês completo, não de queda real de execução.
+    Calculado UMA VEZ sobre a série ESTADUAL (volume alto, heurística
+    confiável) e reaproveitado como o mesmo corte no drill-down por órgão:
+    um órgão de baixo volume não tem contagem própria suficiente pra essa
+    heurística funcionar isolada — usar o corte individual de cada órgão
+    deixava passar o mesmo mês incompleto sem sinalizar (corrigido após
+    verificação visual pós-deploy do achado 2.1, análise crítica de
+    30/07/2026). Retorna None se nenhum corte for necessário."""
     if len(df) <= 1:
-        return df, 0
+        return None
     referencia = df[coluna_contagem].median()
     if not referencia:
-        return df, 0
+        return None
     limite = referencia * LIMIAR_MES_INCOMPLETO
     corte = len(df)
     for i in range(len(df) - 1, -1, -1):
@@ -37,8 +42,33 @@ def _cortar_cauda_incompleta(df: pd.DataFrame, coluna_contagem: str = "n_registr
             corte = i
         else:
             break
+    if corte >= len(df):
+        return None
     corte = max(corte, 1)
-    return df.iloc[:corte].reset_index(drop=True), len(df) - corte
+    ultimo = df.iloc[corte - 1]
+    return int(ultimo["ano"]), int(ultimo["mes"])
+
+
+def _truncar_ate(df: pd.DataFrame, corte: tuple[int, int] | None) -> tuple[pd.DataFrame, int]:
+    """Mantém só os períodos <= `corte` (ano, mês). Retorna (df cortado, nº
+    de linhas removidas)."""
+    if corte is None:
+        return df, 0
+    ano_corte, mes_corte = corte
+    mask = (df["ano"] < ano_corte) | ((df["ano"] == ano_corte) & (df["mes"] <= mes_corte))
+    df_cortado = df[mask].reset_index(drop=True)
+    return df_cortado, len(df) - len(df_cortado)
+
+
+def _legenda_horizontal(fig) -> None:
+    """Legenda embaixo do gráfico, não à direita — right-margin fixo (ex:
+    margin=dict(r=120)) cortava o texto em colunas mais estreitas (drill-down
+    por órgão divide espaço com os cards ao lado) mesmo depois de ajustado
+    (achado 5.3, revisão pós-deploy: "Empenhado" ainda aparecia cortado)."""
+    fig.update_layout(
+        legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0),
+        margin=dict(b=90),
+    )
 
 
 def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
@@ -98,11 +128,15 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         ORDER BY dt.ano, dt.mes
     """
     df_mensal = run_query(query_mensal)
+    # Corte único, calculado sobre a série estadual (ver docstring de
+    # _ultimo_periodo_completo) — reaproveitado depois no drill-down por
+    # órgão mais abaixo, em vez de recalculado por órgão.
+    corte_periodo = _ultimo_periodo_completo(df_mensal) if not df_mensal.empty else None
 
     if df_mensal.empty:
         st.info("Nenhum dado encontrado para os filtros atuais.")
     else:
-        df_mensal, n_cortados = _cortar_cauda_incompleta(df_mensal)
+        df_mensal, n_cortados = _truncar_ate(df_mensal, corte_periodo)
         df_mensal["periodo"] = df_mensal["ano"].astype(str) + "-" + df_mensal["mes"].astype(str).str.zfill(2)
         df_mensal_long = df_mensal.melt(
             id_vars="periodo",
@@ -122,7 +156,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
             labels={"valor": "Valor (R$)", "periodo": "Mês", "tipo": "Origem"},
         )
         fig_mensal.update_traces(line=dict(width=3), marker=dict(size=8))
-        fig_mensal.update_layout(margin=dict(r=120))
+        _legenda_horizontal(fig_mensal)
         st.plotly_chart(fig_mensal, use_container_width=True)
         if n_cortados:
             st.caption(
@@ -240,7 +274,11 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         if df_evolucao_orgao.empty:
             st.info("Nenhum dado mensal encontrado para este órgão.")
         else:
-            df_evolucao_orgao, n_cortados_orgao = _cortar_cauda_incompleta(df_evolucao_orgao)
+            # Mesmo corte da série estadual acima (corte_periodo), não um
+            # recalculado só com o volume deste órgão — órgãos de baixo
+            # volume não têm contagem própria suficiente pra detectar o
+            # próprio mês incompleto de forma confiável.
+            df_evolucao_orgao, n_cortados_orgao = _truncar_ate(df_evolucao_orgao, corte_periodo)
             df_evolucao_orgao["periodo"] = (
                 df_evolucao_orgao["ano"].astype(str) + "-" + df_evolucao_orgao["mes"].astype(str).str.zfill(2)
             )
@@ -265,7 +303,7 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
                 labels={"valor": "Valor (R$)", "periodo": "Mês", "tipo": "Origem"},
             )
             fig_evolucao.update_traces(line=dict(width=3), marker=dict(size=8))
-            fig_evolucao.update_layout(margin=dict(r=120))
+            _legenda_horizontal(fig_evolucao)
             st.plotly_chart(fig_evolucao, use_container_width=True)
             if n_cortados_orgao:
                 st.caption(

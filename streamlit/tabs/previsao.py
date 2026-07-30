@@ -150,8 +150,10 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         # aparece no próprio seletor "Ano de referência" abaixo.
         xaxis_title="Trimestre",
         yaxis_title="Valor (R$)",
-        legend_title="Origem",
-        margin=dict(r=140),
+        # Legenda embaixo, não à direita — right-margin fixo ainda cortava o
+        # texto "Previsto (mediana, P10-P90)" (achado 5.3, revisão pós-deploy).
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0, title="Origem"),
+        margin=dict(b=70),
     )
     st.plotly_chart(fig, use_container_width=True)
 

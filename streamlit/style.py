@@ -80,13 +80,21 @@ section[data-testid="stSidebar"] hr {
    — dá mais variedade visual ao painel (nem tudo verde) e o texto escuro
    correspondente garante contraste. Regra sem escopo de sidebar, mas com
    especificidade menor que a regra de dentro da sidebar acima — só se aplica
-   onde a outra, mais específica, não vale (fora da sidebar). */
+   onde a outra, mais específica, não vale (fora da sidebar).
+   !important no background é necessário: o componente BaseWeb injeta o CSS
+   do próprio tema (emotion) em runtime, DEPOIS do CSS deste arquivo, então
+   uma regra sem !important perdia o empate de especificidade por ordem de
+   inserção (sem !important, o fundo continuava verde-escuro mesmo com a
+   regra "certa" presente). O elemento interno ("control") do BaseWeb tem seu
+   próprio background inline — por isso fica transparente aqui, deixando o
+   amarelo do wrapper aparecer. */
 div[data-baseweb="select"] {
-    background-color: #F5B301;
+    background-color: #F5B301 !important;
     border-radius: 8px;
 }
 div[data-baseweb="select"] * {
     color: #16281F !important;
+    background-color: transparent !important;
 }
 
 /* ---------- Abas ---------- */

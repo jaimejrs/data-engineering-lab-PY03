@@ -269,71 +269,72 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
 
     st.divider()
 
-    colA, colB = st.columns(2)
-    with colA:
-        top_orgaos = (
-            df_medio_alto.groupby("nome_orgao")
-            .size()
-            .reset_index(name="contratos_anomalos")
-            .sort_values("contratos_anomalos", ascending=False)
-            .head(10)
-            .merge(df_contratos_por_orgao, on="nome_orgao", how="left")
-        )
-        # fillna defensivo: todo órgão com contrato anômalo necessariamente
-        # aparece na query de total (sem filtro de score) — não devia disparar.
-        top_orgaos["total_contratos"] = top_orgaos["total_contratos"].fillna(top_orgaos["contratos_anomalos"])
-        top_orgaos["pct_anomalo"] = top_orgaos["contratos_anomalos"] / top_orgaos["total_contratos"] * 100
-        ordem_categoria = top_orgaos.sort_values("contratos_anomalos")["nome_orgao"].tolist()
+    # Todos os órgãos do período filtrado (não só quem tem contrato anômalo)
+    # — parte da query de total (df_contratos_por_orgao) e faz LEFT JOIN da
+    # contagem de anômalos, preenchendo 0 pra quem não tem nenhum. Sem o
+    # ".head(10)" anterior: o usuário quer ver o quadro completo dos órgãos
+    # do ano filtrado, não só um recorte.
+    top_orgaos = df_contratos_por_orgao.merge(
+        df_medio_alto.groupby("nome_orgao").size().reset_index(name="contratos_anomalos"),
+        on="nome_orgao",
+        how="left",
+    )
+    top_orgaos["contratos_anomalos"] = top_orgaos["contratos_anomalos"].fillna(0).astype(int)
+    top_orgaos["pct_anomalo"] = np.where(
+        top_orgaos["total_contratos"] > 0,
+        top_orgaos["contratos_anomalos"] / top_orgaos["total_contratos"] * 100,
+        0.0,
+    )
+    top_orgaos = top_orgaos.sort_values("contratos_anomalos", ascending=False)
+    ordem_categoria = top_orgaos.sort_values("contratos_anomalos")["nome_orgao"].tolist()
 
-        fig_top_orgaos = go.Figure()
-        fig_top_orgaos.add_bar(
-            name="Total de contratos",
-            y=top_orgaos["nome_orgao"],
-            x=top_orgaos["total_contratos"],
-            orientation="h",
-            marker_color="#C7D1CC",
-            hovertemplate="%{y}<br>Total de contratos: %{x}<extra></extra>",
-        )
-        fig_top_orgaos.add_bar(
-            name="Contratos anômalos (médio+alto)",
-            y=top_orgaos["nome_orgao"],
-            x=top_orgaos["contratos_anomalos"],
-            orientation="h",
-            marker_color=CORES_FAIXA_RISCO[FAIXA_ALTO],
-            text=[f"{p:.1f}%" for p in top_orgaos["pct_anomalo"]],
-            textposition="outside",
-            customdata=top_orgaos["pct_anomalo"],
-            hovertemplate="%{y}<br>Anômalos: %{x} (%{customdata:.1f}% do total)<extra></extra>",
-        )
-        fig_top_orgaos.update_layout(
-            barmode="overlay",
-            title="Contratos por órgão — anômalos sobre o total (Top 10)",
-            xaxis_title="Nº de contratos",
-            yaxis_title="Órgão",
-            yaxis={"categoryorder": "array", "categoryarray": ordem_categoria},
-            legend_title="",
-        )
-        st.plotly_chart(fig_top_orgaos, use_container_width=True)
+    fig_top_orgaos = go.Figure()
+    fig_top_orgaos.add_bar(
+        name="Total de contratos",
+        y=top_orgaos["nome_orgao"],
+        x=top_orgaos["total_contratos"],
+        orientation="h",
+        marker_color="#C7D1CC",
+        hovertemplate="%{y}<br>Total de contratos: %{x}<extra></extra>",
+    )
+    fig_top_orgaos.add_bar(
+        name="Contratos anômalos (médio+alto)",
+        y=top_orgaos["nome_orgao"],
+        x=top_orgaos["contratos_anomalos"],
+        orientation="h",
+        marker_color=CORES_FAIXA_RISCO[FAIXA_ALTO],
+        text=[f"{p:.1f}%" for p in top_orgaos["pct_anomalo"]],
+        textposition="outside",
+        customdata=top_orgaos["pct_anomalo"],
+        hovertemplate="%{y}<br>Anômalos: %{x} (%{customdata:.1f}% do total)<extra></extra>",
+    )
+    fig_top_orgaos.update_layout(
+        barmode="overlay",
+        title="Contratos por órgão — anômalos sobre o total",
+        xaxis_title="Nº de contratos",
+        yaxis_title="Órgão",
+        yaxis={"categoryorder": "array", "categoryarray": ordem_categoria},
+        legend_title="",
+        height=max(500, 24 * len(top_orgaos)),
+    )
+    st.plotly_chart(fig_top_orgaos, use_container_width=True)
 
-    with colB:
-        if df_evolucao_anual.empty:
-            st.info("Sem histórico suficiente para a evolução anual.")
-        else:
-            df_evolucao_anual["pct_anomalos"] = (
-                df_evolucao_anual["n_anomalos"] / df_evolucao_anual["total_contratos"] * 100
-            )
-            fig_evolucao = px.bar(
-                df_evolucao_anual,
-                x="ano",
-                y="pct_anomalos",
-                title="Evolução anual do % de contratos anômalos",
-                labels={"ano": "Ano", "pct_anomalos": "% de contratos (score ≥ 0,70)"},
-                color_discrete_sequence=["#e74c3c"],
-                text_auto=".1f",
-            )
-            fig_evolucao.update_xaxes(type="category")
-            fig_evolucao.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
-            st.plotly_chart(fig_evolucao, use_container_width=True)
+    if df_evolucao_anual.empty:
+        st.info("Sem histórico suficiente para a evolução anual.")
+    else:
+        df_evolucao_anual["pct_anomalos"] = df_evolucao_anual["n_anomalos"] / df_evolucao_anual["total_contratos"] * 100
+        fig_evolucao = px.bar(
+            df_evolucao_anual,
+            x="ano",
+            y="pct_anomalos",
+            title="Evolução anual do % de contratos anômalos",
+            labels={"ano": "Ano", "pct_anomalos": "% de contratos (score ≥ 0,70)"},
+            color_discrete_sequence=["#e74c3c"],
+            text_auto=".1f",
+        )
+        fig_evolucao.update_xaxes(type="category")
+        fig_evolucao.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
+        st.plotly_chart(fig_evolucao, use_container_width=True)
 
     st.subheader("Contratos com maior score de anomalia")
     if len(df_anom) > LIMITE_TABELA:

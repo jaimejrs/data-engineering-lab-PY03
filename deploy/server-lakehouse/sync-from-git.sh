@@ -55,6 +55,10 @@ fi
 echo ">> lakehouse/ (dbt, src — target/ e logs/ preservados, são gerados pelo container dbt e não vêm do repo)"
 rsync -av $DRY_RUN_FLAG --delete --exclude 'target/' --exclude 'logs/' --exclude '.user.yml' "$REPO_DIR/dbt/" "$LAKEHOUSE_DIR/dbt/"
 rsync -av $DRY_RUN_FLAG --delete --exclude '__pycache__/' "$REPO_DIR/src/" "$LAKEHOUSE_DIR/src/"
+# --exclude '.env': o real nunca está no clone read-only ($REPO_DIR, nunca
+# commitado), mas protege um .env colocado manualmente em $LAKEHOUSE_DIR/streamlit/
+# (override local) de ser apagado pelo --delete numa sincronização futura.
+rsync -av $DRY_RUN_FLAG --delete --exclude '.env' --exclude '__pycache__/' "$REPO_DIR/streamlit/" "$LAKEHOUSE_DIR/streamlit/"
 
 echo ">> airflow/ (dags, models, src — artifacts/ e __pycache__/ preservados, não vêm do repo)"
 rsync -av $DRY_RUN_FLAG --delete --exclude '__pycache__/' "$REPO_DIR/dags/" "$AIRFLOW_DIR/dags/"

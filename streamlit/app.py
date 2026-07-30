@@ -1,5 +1,6 @@
 import decimal
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -10,14 +11,19 @@ import trino
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+
+_ROOT_ENV = Path(__file__).resolve().parent.parent / ".env"
+_LOCAL_ENV = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ROOT_ENV)
+load_dotenv(_LOCAL_ENV, override=True)
 
 # ---------------------------------------------------------------------------
-# Configuração de conexão (lida do arquivo .env)
+# Configuração de conexão 
 # ---------------------------------------------------------------------------
 HOST = os.getenv("TRINO_HOST", "100.69.31.14")
 PORT = int(os.getenv("TRINO_PORT", "8085"))
 USER = os.getenv("TRINO_USER", "arthur")
+HTTP_SCHEME = os.getenv("TRINO_HTTP_SCHEME", "http")
 CATALOG = os.getenv("TRINO_CATALOG", "iceberg")
 
 st.set_page_config(
@@ -83,7 +89,7 @@ def get_connection():
         user=USER,
         catalog=CATALOG,
         schema="gold",
-        http_scheme="http",
+        http_scheme=HTTP_SCHEME,
     )
 
 
@@ -113,7 +119,7 @@ def formatar_bilhoes(valor: float) -> str:
     return f"R$ {texto} bi"
 
 
-# Paleta institucional (inspirada no Governo do Ceará: verde + amarelo)
+# Paleta institucional 
 COR_PAGO = "#1B8A3D"
 COR_EMPENHADO = "#F5B301"
 COR_PREVISTO = "#E74C3C"
@@ -321,7 +327,7 @@ with col_logo_app:
         st.image(LOGO_PATH, use_container_width=True)
 
 tab_geral, tab_previsao, tab_anomalias, tab_resumo = st.tabs(
-    ["📊 Visão Geral", "📈 Previsão de Pagamentos", "🚨 Anomalias em Contratos", "📝 Resumo (IA)"]
+    ["Visão Geral", "Previsão de Pagamentos", "Anomalias em Contratos", "Resumo (IA)"]
 )
 
 # ---------------------------------------------------------------------------

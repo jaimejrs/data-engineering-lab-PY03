@@ -115,6 +115,34 @@ services:
       - superset_home:/app/superset_home
     restart: unless-stopped
 
+  streamlit:
+    build:
+      context: ./streamlit
+      network: host
+    image: datalab-streamlit:local
+    container_name: lakehouse_streamlit
+    mem_limit: 1g
+    cpus: 1.0
+    env_file:
+      # .env real do servidor (OPENAI_API_KEY/MODEL) — nunca commitado, vive
+      # fora do repo em /home/dataadm/.env. Ver streamlit/app.py: localmente
+      # (fora de container) o app carrega esse mesmo arquivo via caminho
+      # relativo; aqui quem injeta é o próprio Compose.
+      - /home/dataadm/.env
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_HTTP_SCHEME: http
+      TRINO_CATALOG: iceberg
+      TRINO_USER: streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./streamlit:/app
+    depends_on:
+      - trino
+    restart: unless-stopped
+
   # dbt (adapter Trino) — sob demanda: `docker compose run --rm dbt build`.
   dbt:
     build:

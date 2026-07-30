@@ -1,6 +1,11 @@
 streamlit>=1.35
-trino>=0.328
-pandas>=2.0
 plotly>=5.20
-openai>=1.40
-python-dotenv>=1.0
+
+# Versões fixas iguais ao requirements.txt da raiz do projeto — este painel lê
+# as mesmas tabelas Iceberg que o resto do pipeline, então usar uma versão
+# solta aqui arriscaria drift de comportamento (ex: parsing de DECIMAL do
+# driver Trino, serialização do pandas) entre o painel e o pipeline principal.
+trino==0.328.0
+pandas==2.2.2
+openai==1.51.0
+python-dotenv==1.0.1

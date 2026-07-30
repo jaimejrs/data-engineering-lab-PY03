@@ -116,6 +116,9 @@ push (ver seção "CI/CD" abaixo) — não só validados manualmente.
 │   ├── spark_jobs/               # Silver real do lakehouse — Bronze -> Iceberg (MERGE INTO)
 │   └── validators/              # validação de schema/completude da Bronze
 ├── dbt/                          # Gold declarativa — staging -> dims -> fatos + testes (dbt-trino)
+├── models/                       # Fase 3 (ML/IA) — Modelo 1 (anomaly_detection.py) e Modelo 2 (payment_forecast.py)
+├── streamlit/                    # painel de negócio (Docker próprio) — consome iceberg.gold/ml via Trino
+│   └── tabs/                     #   Visão Geral, Previsão de Pagamentos, Anomalias em Contratos, Resumo (IA)
 ├── docker/                       # Dockerfiles do stack (airflow, spark, hive, trino, superset)
 ├── deploy/server-lakehouse/      # overlay aditivo do lakehouse no servidor real do time
 │   │                             #   (auto-sync.py: deploy pull-based via cron + Checks API;
@@ -123,10 +126,10 @@ push (ver seção "CI/CD" abaixo) — não só validados manualmente.
 │   │                             #   collect_infra_metrics.py / collect_access_audit.py: schema audit)
 ├── .github/workflows/ci.yml      # CI (5 jobs) + CD (deploy via SSH/Tailscale) — ver seção "CI/CD"
 ├── documentacao/                 # documentação técnica de entrega (arquitetura, dicionário de dados)
+├── slide-html/                   # apresentação HTML de entrega (storytelling do projeto)
 ├── notebooks/                    # exploração de ingestão + EDA Bronze/Silver/Gold + treino/avaliação ML
-├── models/                       # Fase 3 (ML/IA) — Modelo 1 (anomaly_detection.py) e Modelo 2 (payment_forecast.py)
 ├── tests/                        # pytest — extractors, validators, transformers, modelos de ML
-├── apresentacao/                 # apresentação HTML do storytelling do projeto (gerada, git-ignorada)
+├── apresentacao/                 # rascunho de apresentação HTML (git-ignorada — ver slide-html/ pra versão de entrega)
 ├── .env / .env.example
 └── requirements.txt
 ```

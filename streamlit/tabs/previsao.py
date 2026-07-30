@@ -13,27 +13,35 @@ from formatting import formatar_bilhoes
 import streamlit as st
 
 
+def _primeiro_trimestre_sem_dado_real(real_map: dict) -> int:
+    """Primeiro trimestre (1, 2 ou 3) sem pagamento real registrado — usado
+    como padrão do seletor, pra não sugerir substituir um trimestre que já
+    tem dado real conhecido pela previsão do modelo."""
+    for t in (1, 2, 3):
+        if not real_map.get(t):
+            return t
+    return 3  # os 3 já têm dado real — não há trimestre "óbvio" a prever
+
+
 def render(anos_disponiveis: list) -> tuple[int, int]:
     st.subheader("Valor pago por trimestre")
 
-    col_ano, col_tri = st.columns(2)
-    ano_ref = col_ano.selectbox(
+    query_anos_previstos = "SELECT DISTINCT ano_previsto FROM iceberg.ml.previsao_pagamento_orgao"
+    df_anos_previstos = run_query(query_anos_previstos)
+    anos_previstos = set(df_anos_previstos["ano_previsto"].tolist()) if not df_anos_previstos.empty else set()
+
+    ano_ref = st.selectbox(
         "Ano de referência",
-        options=sorted(set(anos_disponiveis) | {2026}, reverse=True),
+        options=sorted(set(anos_disponiveis) | anos_previstos, reverse=True),
         index=0,
     )
-    trimestre_previsto_sel = col_tri.selectbox(
-        "Trimestre a substituir pela previsão",
-        options=[1, 2, 3],
-        index=2,  # padrão: 3º trimestre
-    )
 
-    st.caption(
-        "Soma total de todos os órgãos por trimestre. Os trimestres com dado real usam "
-        "o valor efetivamente pago; o trimestre selecionado acima usa a previsão do "
-        "modelo (mediana, com intervalo P10-P90)."
-    )
-
+    # Consulta o dado real ANTES do seletor de trimestre, pra sugerir como
+    # padrão o primeiro trimestre que ainda não tem pagamento real — evita
+    # que o padrão substitua, pela previsão, um trimestre cujo valor real
+    # já é conhecido (achado real: 2026-T1/T2/T3 já tinham dado real E
+    # previsão ao mesmo tempo, e o padrão antigo — sempre T3 — mostrava a
+    # previsão no lugar do valor real sem nenhum aviso).
     query_empenho_trimestre = f"""
         SELECT dt.trimestre, SUM(fc.valor_pago) AS valor_pago_trimestre
         FROM iceberg.gold.fato_contrato fc
@@ -42,6 +50,34 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         GROUP BY dt.trimestre
         ORDER BY dt.trimestre
     """
+    df_emp_tri = run_query(query_empenho_trimestre)
+    real_map = (
+        dict(zip(df_emp_tri["trimestre"], df_emp_tri["valor_pago_trimestre"], strict=False))
+        if not df_emp_tri.empty
+        else {}
+    )
+
+    trimestre_previsto_sel = st.selectbox(
+        "Trimestre a substituir pela previsão",
+        options=[1, 2, 3],
+        index=_primeiro_trimestre_sem_dado_real(real_map) - 1,
+        help="Por padrão, sugere o primeiro trimestre do ano que ainda não tem pagamento real registrado.",
+    )
+
+    st.caption(
+        "Soma total de todos os órgãos por trimestre. Os trimestres com dado real usam "
+        "o valor efetivamente pago; o trimestre selecionado acima usa a previsão do "
+        "modelo (mediana, com intervalo P10-P90)."
+    )
+
+    if real_map.get(trimestre_previsto_sel):
+        st.warning(
+            f"⚠️ Já existe pagamento real registrado para {ano_ref}-T{trimestre_previsto_sel} "
+            f"({formatar_bilhoes(real_map[trimestre_previsto_sel])}). O gráfico abaixo está "
+            "mostrando a **previsão** no lugar do valor real só para fins de comparação — "
+            "não é o valor efetivamente pago.",
+            icon="⚠️",
+        )
 
     query_previsto_trimestre = f"""
         SELECT SUM(valor_previsto_p50) AS p50
@@ -49,15 +85,7 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
         WHERE ano_previsto = {ano_ref}
           AND trimestre_previsto = {trimestre_previsto_sel}
     """
-
-    df_emp_tri = run_query(query_empenho_trimestre)
     df_prev_tri = run_query(query_previsto_trimestre)
-
-    real_map = (
-        dict(zip(df_emp_tri["trimestre"], df_emp_tri["valor_pago_trimestre"], strict=False))
-        if not df_emp_tri.empty
-        else {}
-    )
 
     prev_p50 = None
     if not df_prev_tri.empty and pd.notna(df_prev_tri.iloc[0]["p50"]):
@@ -166,7 +194,8 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     st.subheader(f"Pago vs. Previsto — todos os trimestres de {ano_ref}")
     st.caption(
         "Diferente do gráfico acima (que substitui um trimestre pela previsão), "
-        "aqui os dois valores aparecem lado a lado para cada trimestre disponível na tabela de previsão."
+        "aqui os dois valores aparecem lado a lado para cada trimestre disponível na tabela de previsão — "
+        "inclusive nos trimestres onde os dois já existem, útil pra comparar o quão perto a previsão chegou do real."
     )
 
     query_previsto_todos = f"""

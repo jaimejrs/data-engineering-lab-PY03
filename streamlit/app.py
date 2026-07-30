@@ -102,6 +102,19 @@ with col_logo_app:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, use_container_width=True)
 
+with st.expander("ℹ️ Sobre os dados — limitações conhecidas"):
+    st.markdown(
+        "- **Contrato × Empenho/Ordem Bancária**: a ligação entre um contrato e seus "
+        "empenhos/ordens bancárias (`num_spu` × `cod_contrato`) é *best-effort* — bate em só "
+        "~7-8% dos casos na fonte original. Os valores empenhado/pago mostrados aqui vêm "
+        "diretamente do próprio contrato (já calculados pela API de origem), não de uma soma "
+        "reconciliada linha a linha com as tabelas de empenho/ordem bancária.\n"
+        "- **Aproveitamento acima de 100%**: pode ocorrer quando o valor pago já reflete "
+        "aditivo ou ajuste contratual posterior ao valor originalmente empenhado.\n"
+        "- **Score de anomalia**: sinal estatístico (Isolation Forest, não supervisionado) "
+        "para priorizar revisão humana — não é, por si só, indício de irregularidade."
+    )
+
 tab_geral, tab_previsao, tab_anomalias, tab_resumo = st.tabs(
     ["Visão Geral", "Previsão de Pagamentos", "Anomalias em Contratos", "Resumo (IA)"]
 )
@@ -116,4 +129,4 @@ with tab_anomalias:
     anomalias.render(anos_selecionados, orgaos_selecionados, score_threshold)
 
 with tab_resumo:
-    resumo_ia.render(score_threshold, ano_ref, trimestre_previsto_sel)
+    resumo_ia.render(score_threshold, ano_ref, trimestre_previsto_sel, anos_selecionados, orgaos_selecionados)

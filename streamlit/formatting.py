@@ -11,6 +11,30 @@ def formatar_bilhoes(valor: float) -> str:
     return f"R$ {texto} bi"
 
 
+def formatar_moeda_adaptativo(valor: float) -> str:
+    """Formata em R$ escolhendo a casa (bi/mi/mil) pela ordem de grandeza —
+    ao contrário de formatar_bilhoes(), que sempre mostra "bi" mesmo para
+    valores pequenos (ex: um órgão com R$ 100 milhões apareceria como
+    "R$ 0,10 bi", pouco legível). Usado no drill-down por órgão específico,
+    onde o valor pode ser bem menor que o agregado do estado inteiro."""
+    valor = valor or 0
+    sinal = "-" if valor < 0 else ""
+    absoluto = abs(valor)
+
+    if absoluto >= 1_000_000_000:
+        numero, sufixo = absoluto / 1_000_000_000, "bi"
+    elif absoluto >= 1_000_000:
+        numero, sufixo = absoluto / 1_000_000, "mi"
+    elif absoluto >= 1_000:
+        numero, sufixo = absoluto / 1_000, "mil"
+    else:
+        texto = f"{absoluto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{sinal}R$ {texto}"
+
+    texto = f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{sinal}R$ {texto} {sufixo}"
+
+
 def fmt_reais(valor) -> str:
     if valor is None or pd.isna(valor):
         return "não informado"

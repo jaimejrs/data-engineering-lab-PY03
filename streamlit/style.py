@@ -56,43 +56,45 @@ section[data-testid="stSidebar"] span {
     color: #FFFFFF !important;
 }
 /* Caixa do dropdown em branco com texto escuro — contraste garantido contra
-   o fundo verde escuro da sidebar, em vez de tentar forçar texto claro por
-   cima do verde (frágil: qualquer elemento interno do baseweb que escape da
-   regra vira texto escuro invisível sobre fundo escuro, exatamente o defeito
-   relatado). Só dentro da sidebar; a lista de opções, que abre por cima do
-   conteúdo principal, não é afetada. */
-section[data-testid="stSidebar"] div[data-baseweb="select"] {
-    background-color: #FFFFFF;
+   o fundo verde escuro da sidebar. Só dentro da sidebar; a lista de opções,
+   que abre por cima do conteúdo principal, não é afetada.
+   Seletor: o Streamlit 1.60 trocou o componente interno do selectbox de
+   BaseWeb (data-baseweb="select") para React Aria — confirmado inspecionando
+   o DOM real renderido (Playwright headless contra a URL pública), já que
+   as regras antigas baseadas em data-baseweb pararam de casar com qualquer
+   elemento (viraram CSS morto) depois do rebuild da imagem Docker, que
+   puxou um Streamlit mais novo (requirements.txt tinha "streamlit>=1.35",
+   sem teto). O testid do wrapper (stSelectbox) permanece estável; dentro
+   dele, o "control" visível é o div[role="group"] (papel ARIA do próprio
+   React Aria, não uma classe emotion volátil). */
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[role="group"] {
+    background-color: #FFFFFF !important;
     border-radius: 8px;
 }
-section[data-testid="stSidebar"] div[data-baseweb="select"] * {
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[role="group"] * {
     color: #16281F !important;
+    background-color: transparent !important;
 }
 section[data-testid="stSidebar"] hr {
     border-color: rgba(255, 255, 255, 0.25);
 }
 
 /* Selects FORA da sidebar (área principal, ex: "Ano de referência",
-   "Órgão"): o tema do app (.streamlit/config.toml, secondaryBackgroundColor)
-   deixa o fundo desses widgets verde escuro em QUALQUER lugar da página, não
+   "Órgão"): alguns selectboxes (os que têm texto de ajuda "?") ganham do
+   Streamlit uma variante de container com o fundo em
+   secondaryBackgroundColor (verde escuro) — QUALQUER lugar da página, não
    só na sidebar. Em vez de manter o verde e só ajustar o texto, o fundo vira
    amarelo (cor de destaque do branding, mesma do primaryColor/COR_EMPENHADO)
    — dá mais variedade visual ao painel (nem tudo verde) e o texto escuro
    correspondente garante contraste. Regra sem escopo de sidebar, mas com
-   especificidade menor que a regra de dentro da sidebar acima — só se aplica
-   onde a outra, mais específica, não vale (fora da sidebar).
-   !important no background é necessário: o componente BaseWeb injeta o CSS
-   do próprio tema (emotion) em runtime, DEPOIS do CSS deste arquivo, então
-   uma regra sem !important perdia o empate de especificidade por ordem de
-   inserção (sem !important, o fundo continuava verde-escuro mesmo com a
-   regra "certa" presente). O elemento interno ("control") do BaseWeb tem seu
-   próprio background inline — por isso fica transparente aqui, deixando o
-   amarelo do wrapper aparecer. */
-div[data-baseweb="select"] {
+   especificidade menor que a regra de dentro da sidebar acima (um seletor
+   a menos: sem o section[data-testid="stSidebar"]) — só decide fora da
+   sidebar, onde a outra, mais específica, não se aplica. */
+div[data-testid="stSelectbox"] div[role="group"] {
     background-color: #F5B301 !important;
     border-radius: 8px;
 }
-div[data-baseweb="select"] * {
+div[data-testid="stSelectbox"] div[role="group"] * {
     color: #16281F !important;
     background-color: transparent !important;
 }

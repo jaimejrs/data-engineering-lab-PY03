@@ -1,4 +1,7 @@
-streamlit>=1.35
+# Pinned (não ">=") desde que um rebuild puxou 1.60 sem aviso e trocou o
+# componente interno do selectbox (BaseWeb -> React Aria), quebrando
+# silenciosamente o CSS de contraste em style.py (ver comentários lá).
+streamlit==1.60.0
 plotly>=5.20
 
 # Versões fixas iguais ao requirements.txt da raiz do projeto — este painel lê

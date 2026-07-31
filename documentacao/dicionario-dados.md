@@ -222,6 +222,30 @@ de negócio). Contagens da carga completa (19/07/2026) entre parênteses.
 Cobertura real do join: 211/215.402 sem `sk_orgao` (0,1%), 11/215.402 sem `sk_credor` — resto
 100% resolvido.
 
+**Causa raiz do ~7-8% de match `num_spu`↔`cod_contrato` (investigado em 31/07/2026,
+a pedido, pra descartar erro de modelagem nosso):**
+- `contratos` (API do Ceará Transparente) e `empenhos`/`ordem_bancaria_orcamentaria`
+  (Postgres interno) são fontes independentes — nunca existiu FK real entre elas,
+  e nenhuma transformação nossa (Bronze→Silver→Gold) altera `num_spu`/`codprocesso`
+  entre a origem e a Gold (conferido no SQL do dbt).
+- A Silver tem `num_contrato` (formato "02/2022", número de contrato "humano"),
+  nunca usado como chave alternativa — testado e descartado: só 35% de
+  preenchimento (contra 99,95% de `num_spu`) e formato sem relação nenhuma com
+  `empenhos.codcontrato` (código numérico de 10 dígitos).
+- Só ~33% dos `codprocesso` de `empenhos` sequer têm formato de processo
+  administrativo (SEI) — o resto é folha, tarifas, decisão judicial etc., sem
+  contrato de procurement associado por natureza.
+- **Achado novo:** o formato de `num_spu`/`codprocesso` migrou de
+  "NNNNNNNN/AAAA" pro SEI completo "NNNNN.NNNNNN/AAAA-NN" entre 2022 e 2023,
+  nas duas fontes independentes e no mesmo período — evento real do estado
+  (expansão do SEI), não algo do pipeline.
+- Mesmo isolando só o dado já 100% no formato SEI (2024-2025, o mais "limpo"
+  possível), a taxa de match fica em 12-13% — não sobe perto de 100%. Indica
+  que o processo SEI de formalização do contrato e o processo SEI de execução
+  orçamentária anual desse mesmo contrato são, na prática administrativa real,
+  processos diferentes (um novo processo de execução por exercício) — teto
+  estrutural das duas fontes, não bug de join.
+
 ### `fato_empenho` — 1.376.379 linhas (sem particionamento — não exigido pelo checklist)
 
 | Coluna | Tipo | Descrição | Origem (Bronze) |
@@ -234,3 +258,7 @@ Cobertura real do join: 211/215.402 sem `sk_orgao` (0,1%), 11/215.402 sem `sk_cr
 | `modalidade` | `VARCHAR` | Classificação | `empenhos.modalidade` (confirmado real, `text`) |
 
 Cobertura real do join: 0 registros sem `sk_orgao` — 100% resolvido.
+
+Causa raiz do ~7-8% de match com `fato_contrato.num_spu`: ver nota completa
+logo abaixo da tabela de `fato_contrato` acima (investigado em 31/07/2026) —
+não é erro de modelagem, é teto estrutural de duas fontes independentes.

@@ -249,13 +249,13 @@
         <div class="grid cols-2">
           <div class="card">
             <h3 style="font-size:13px">6 jobs de CI, em paralelo, a cada push</h3>
-            <p style="font-size:12px;margin:0;line-height:1.7">
-              <code>lint</code>, Ruff (check + format)<br>
-              <code>tests</code>, suíte leve, tudo mockado<br>
-              <code>streamlit-smoke</code>, AppTest do painel, Trino mockado<br>
-              <code>spark-tests</code>, Spark+Iceberg local, idempotência do MERGE<br>
-              <code>dbt</code>, parse dos modelos da Gold<br>
-              <code>dbt-integration</code>, build real contra Trino+Iceberg+HMS efêmero
+            <p style="font-size:11.5px;margin:0;line-height:1.75">
+              <code>lint</code>, confere estilo e formatação do código com Ruff<br>
+              <code>tests</code>, roda a suíte leve (regras de negócio, normalização, extractors), tudo mockado<br>
+              <code>streamlit-smoke</code>, abre as 4 abas do painel com o Trino simulado, pra pegar erro de carregamento antes da produção<br>
+              <code>spark-tests</code>, roda Spark local + Iceberg pra confirmar que reprocessar o mesmo dado não duplica nada<br>
+              <code>dbt</code>, valida a sintaxe e as referências dos modelos da Gold<br>
+              <code>dbt-integration</code>, roda os testes de dado (unicidade, relacionamento) contra Trino e Iceberg reais (efêmeros, só para o teste), com dado sintético
             </p>
           </div>
           <div class="card">

@@ -405,54 +405,68 @@
     <section class="slide" data-title="Interfaces Gráficas">
       <div class="eyebrow">05 — Fotos das Interfaces Gráficas</div>
       <h1>Capturas reais do ambiente em produção</h1>
-      <div class="slide-body" style="max-width:1110px">
-        <div class="grid cols-2" style="grid-template-rows: 1fr 1fr; height: 560px">
-          <div class="card browser-card">
-            <div class="browser-chrome">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="url">100.69.31.14:9870 — Hadoop HDFS · Browse Directory</span>
-            </div>
-            <div class="shot-wrap">
-              <img src="assets/screenshot-hdfs.png" alt="HDFS NameNode UI — diretório /bronze">
-            </div>
-            <div class="shot-caption">/bronze — contratos, empenhos, ordem_bancaria_orcamentaria, unidade_gestora</div>
-          </div>
-          <div class="card browser-card">
-            <div class="browser-chrome">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="url">100.69.31.14:8080 — Apache Airflow · DAGs</span>
-            </div>
-            <div class="shot-wrap">
-              <img src="assets/screenshot-airflow.png" alt="Airflow — grid das 4 DAGs encadeadas por Dataset">
-            </div>
-            <div class="shot-caption">4 DAGs encadeadas por Dataset — bronze_extract → silver_transform → gold_load → ml_inference</div>
-          </div>
-          <div class="card browser-card">
-            <div class="browser-chrome">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="url">100.69.31.14:8085/ui — Trino · Cluster Overview</span>
-            </div>
-            <div class="shot-wrap">
-              <img src="assets/screenshot-trino.png" alt="Trino — monitor de queries reais rodando contra a Gold">
-            </div>
-            <div class="shot-caption">Query real de ranking de órgãos + coleta de auditoria rodando ao vivo</div>
-          </div>
-          <div class="card browser-card">
-            <div class="browser-chrome">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              <span class="url">DBeaver — JDBC trino://100.69.31.14:8085/iceberg</span>
-            </div>
-            <div class="shot-wrap">
-              <img src="assets/screenshot-dbeaver.png" alt="DBeaver — tabelas da Gold"
-                   onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
-              <div class="shot-placeholder">
-                <strong style="color:var(--ink)">Print pendente</strong>
-                <span>Conecte via driver Trino JDBC (host <code>100.69.31.14</code>,
-                porta <code>8085</code>, catálogo <code>iceberg</code>, sem senha) e
-                salve o print como<br><code>slide-html/assets/screenshot-dbeaver.png</code>.</span>
+      <div class="slide-body" style="max-width:1150px">
+        <div style="display:flex; flex-direction:column; gap:12px; height:568px">
+          <div class="grid cols-3" style="flex:1; min-height:0">
+            <div class="card browser-card">
+              <div class="browser-chrome">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="url">100.69.31.14:9870 — Hadoop HDFS · Browse Directory</span>
               </div>
+              <div class="shot-wrap">
+                <img src="assets/screenshot-hdfs.png" alt="HDFS NameNode UI — diretório /bronze">
+              </div>
+              <div class="shot-caption">/bronze — contratos, empenhos, ordem_bancaria_orcamentaria, unidade_gestora</div>
             </div>
-            <div class="shot-caption">iceberg.gold.* — dims + fatos vistos por um cliente SQL de terceiros</div>
+            <div class="card browser-card">
+              <div class="browser-chrome">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="url">100.69.31.14:8080 — Apache Airflow · DAGs</span>
+              </div>
+              <div class="shot-wrap">
+                <img src="assets/screenshot-airflow.png" alt="Airflow — grid das 4 DAGs encadeadas por Dataset">
+              </div>
+              <div class="shot-caption">4 DAGs — bronze_extract → silver_transform → gold_load → ml_inference</div>
+            </div>
+            <div class="card browser-card">
+              <div class="browser-chrome">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="url">100.69.31.14:8085/ui — Trino · Cluster Overview</span>
+              </div>
+              <div class="shot-wrap">
+                <img src="assets/screenshot-trino.png" alt="Trino — monitor de queries reais rodando contra a Gold">
+              </div>
+              <div class="shot-caption">Query real de ranking de órgãos + coleta de auditoria ao vivo</div>
+            </div>
+          </div>
+          <div class="grid cols-2" style="flex:1; min-height:0">
+            <div class="card browser-card">
+              <div class="browser-chrome">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="url">DBeaver — JDBC trino://100.69.31.14:8085/iceberg</span>
+              </div>
+              <div class="shot-wrap">
+                <img src="assets/screenshot-dbeaver.png" alt="DBeaver — tabelas da Gold"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                <div class="shot-placeholder">
+                  <strong style="color:var(--ink)">Print pendente</strong>
+                  <span>Conecte via driver Trino JDBC (host <code>100.69.31.14</code>,
+                  porta <code>8085</code>, catálogo <code>iceberg</code>, sem senha) e
+                  salve o print como<br><code>slide-html/assets/screenshot-dbeaver.png</code>.</span>
+                </div>
+              </div>
+              <div class="shot-caption">iceberg.gold.* — dims + fatos vistos por um cliente SQL de terceiros</div>
+            </div>
+            <div class="card browser-card">
+              <div class="browser-chrome">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="url">localhost:5000 — MLflow · Experiment Tracking</span>
+              </div>
+              <div class="shot-wrap">
+                <img src="assets/screenshot-mlflow.png" alt="MLflow — runs dos Modelos 1 e 2, params/métricas/artefato por execução">
+              </div>
+              <div class="shot-caption">2 experimentos — anomaly_detection e payment_forecast, params/métricas/modelo por execução</div>
+            </div>
           </div>
         </div>
       </div>

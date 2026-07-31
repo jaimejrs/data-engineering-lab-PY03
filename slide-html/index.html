@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ceará Transparente — Pipeline de Dados e IA</title>
+<title>Ceará Transparente, Pipeline de Dados e IA</title>
 <style>
   :root {
     --slide-w: 1280px;
@@ -197,11 +197,11 @@
     <div class="deck" id="deck">
 
     <section class="slide active" data-title="Capa">
-      <div class="eyebrow">Trabalho de Engenharia de Dados — PY03</div>
+      <div class="eyebrow">Trabalho de Engenharia de Dados (PY03)</div>
       <h1>Ceará Transparente<br>Pipeline de Dados e IA</h1>
       <div class="slide-body">
         <p>De duas fontes públicas sem trilha de auditoria a um <strong>lakehouse</strong>
-        completo — Bronze → Silver → Gold, com modelos de Machine Learning e um
+        completo (Bronze → Silver → Gold), com modelos de Machine Learning e um
         componente de IA generativa rodando em produção, orquestrados de ponta a ponta.</p>
         <hr class="rule">
         <p class="mono" style="color:var(--ink-dim)">
@@ -211,7 +211,7 @@
     </section>
 
     <section class="slide" data-title="Ambiente de Trabalho">
-      <div class="eyebrow">01 — Ambiente de Trabalho</div>
+      <div class="eyebrow">01) Ambiente de Trabalho</div>
       <h1>Um laboratório real, não uma maquete</h1>
       <div class="slide-body" style="max-width:1110px">
         <div class="grid cols-3">
@@ -219,7 +219,7 @@
             <h3>Escopo dos dados</h3>
             <p style="font-size:13px"><strong>2022 a 2026</strong> · cerca de
             <strong>3 milhões de registros</strong> processados (1,38M
-            empenhos + 1,40M ordens bancárias + 216 mil contratos) —
+            empenhos + 1,40M ordens bancárias + 216 mil contratos),
             extraídos, validados e versionados automaticamente, todos os
             dias.</p>
           </div>
@@ -230,10 +230,10 @@
             reproduzida antes num ambiente isolado, nunca direto em produção.</p>
           </div>
           <div class="card">
-            <h3>Servidor Ubuntu — acesso via SSH</h3>
-            <p style="font-size:13px"><code>ssh dataadm@100.69.31.14</code> — alcançável só pela
+            <h3>Servidor Ubuntu (acesso via SSH)</h3>
+            <p style="font-size:13px"><code>ssh dataadm@100.69.31.14</code>, alcançável só pela
             rede privada <strong>Tailscale</strong> do time, nunca exposto à
-            internet aberta. <strong>24h no ar</strong>, uso concomitante —
+            internet aberta. <strong>24h no ar</strong>, uso concomitante,
             por isso existe uma auditoria de acesso própria (sessão SSH +
             comando executado, mesmo via <code>sudo</code>).</p>
           </div>
@@ -242,7 +242,7 @@
     </section>
 
     <section class="slide" data-title="CI/CD">
-      <div class="eyebrow">02 — CI/CD &amp; Gestão do Projeto</div>
+      <div class="eyebrow">02) CI/CD &amp; Gestão do Projeto</div>
       <h1>Da entrega automatizada à organização do trabalho</h1>
       <div class="slide-body" style="max-width:1110px">
         <h2 style="margin-top:0">Integração e entrega contínua</h2>
@@ -250,16 +250,16 @@
           <div class="card">
             <h3 style="font-size:13px">6 jobs de CI, em paralelo, a cada push</h3>
             <p style="font-size:12px;margin:0;line-height:1.7">
-              <code>lint</code> — Ruff (check + format)<br>
-              <code>tests</code> — suíte leve, tudo mockado<br>
-              <code>streamlit-smoke</code> — AppTest do painel, Trino mockado<br>
-              <code>spark-tests</code> — Spark+Iceberg local, idempotência do MERGE<br>
-              <code>dbt</code> — parse dos modelos da Gold<br>
-              <code>dbt-integration</code> — build real contra Trino+Iceberg+HMS efêmero
+              <code>lint</code>, Ruff (check + format)<br>
+              <code>tests</code>, suíte leve, tudo mockado<br>
+              <code>streamlit-smoke</code>, AppTest do painel, Trino mockado<br>
+              <code>spark-tests</code>, Spark+Iceberg local, idempotência do MERGE<br>
+              <code>dbt</code>, parse dos modelos da Gold<br>
+              <code>dbt-integration</code>, build real contra Trino+Iceberg+HMS efêmero
             </p>
           </div>
           <div class="card">
-            <h3 style="font-size:13px">Deploy — só com os 6 jobs verdes, só na main</h3>
+            <h3 style="font-size:13px">Deploy (só com os 6 jobs verdes, só na main)</h3>
             <p style="font-size:12px;margin:0">Job de <strong>deploy</strong> entra na rede privada do
             servidor via SSH sobre Tailscale (chave dedicada, restrita ao script de deploy) e aplica o
             código em segundos. Camada extra: <code>auto-sync.py</code> roda em cron no servidor a cada
@@ -267,12 +267,12 @@
           </div>
         </div>
 
-        <h2>Gestão do projeto — GitHub</h2>
+        <h2>Gestão do projeto (GitHub)</h2>
         <div class="grid cols-3">
           <div class="card" style="padding:12px 14px">
             <h3 style="font-size:13px">Issues</h3>
             <p style="font-size:12px;margin:0">Rastreamento de tarefas e pendências do time
-            (ex: prazo final, escolha de ferramenta de dataviz) — histórico de quando cada
+            (ex: prazo final, escolha de ferramenta de dataviz), histórico de quando cada
             decisão foi aberta e fechada.</p>
           </div>
           <div class="card" style="padding:12px 14px">
@@ -283,20 +283,20 @@
           <div class="card" style="padding:12px 14px">
             <h3 style="font-size:13px">Branches + Pull Requests</h3>
             <p style="font-size:12px;margin:0">Branch por frente de trabalho, revisão via PR
-            antes do merge na <code>main</code> — inclusive esta apresentação, slide a slide.</p>
+            antes do merge na <code>main</code>, inclusive esta apresentação, slide a slide.</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="slide" data-title="Dados (Fonte)">
-      <div class="eyebrow">03 — Dados (Fonte)</div>
+      <div class="eyebrow">03) Dados (Fonte)</div>
       <h1>Duas fontes públicas, sem trilha de auditoria</h1>
       <div class="slide-body">
         <p><strong>API REST Ceará Transparente</strong> (contratos, paginada) +
         <strong>PostgreSQL de origem</strong> (<code>empenhos</code>,
-        <code>ordem_bancaria_orcamentaria</code>, <code>unidade_gestora</code>)
-        — nenhuma delas pensada para virar base analítica de origem.</p>
+        <code>ordem_bancaria_orcamentaria</code>, <code>unidade_gestora</code>),
+        nenhuma delas pensada para virar base analítica de origem.</p>
 
         <div class="grid cols-3" style="margin-top:12px">
           <div class="card">
@@ -311,7 +311,7 @@
             <h3>Investigação profunda (ML)</h3>
             <p style="font-size:12.5px">Contrato tem valor/prazo/modalidade fora do padrão? Quanto um
             órgão deve pagar no próximo trimestre? São perguntas que consulta
-            SQL sozinha não responde bem — gancho direto pros dois modelos de
+            SQL sozinha não responde bem, gancho direto pros dois modelos de
             Machine Learning (ver slide "Machine Learning").</p>
           </div>
           <div class="card">
@@ -319,23 +319,23 @@
             <p style="font-size:12.5px">Nenhuma tabela tem <strong>chave primária</strong>
             declarada, datas vêm como texto solto, a própria API tem um erro
             de digitação num campo-chave, e as chaves que ligam as duas
-            fontes são fracas — só <span class="stat">~6%</span> de
-            correspondência real.</p>
+            fontes são fracas (só <span class="stat">~6%</span> de
+            correspondência real).</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="slide" data-title="Stacks">
-      <div class="eyebrow">04 — Stacks · Ferramentas Utilizadas</div>
+      <div class="eyebrow">04) Stacks · Ferramentas Utilizadas</div>
       <h1>Cada ferramenta resolve um problema real</h1>
       <div class="slide-body" style="max-width:1110px">
         <p style="margin-bottom:10px;font-size:13px">
           <span class="tag bronze">Fontes (API + Postgres)</span> →
-          <span class="tag bronze">Bronze — HDFS</span> →
-          <span class="tag silver">Silver — Spark + Iceberg</span> →
-          <span class="tag gold">Gold — dbt + Trino</span> →
-          <span class="tag teal">Consumo — Superset · Streamlit · notebooks</span>
+          <span class="tag bronze">Bronze (HDFS)</span> →
+          <span class="tag silver">Silver (Spark + Iceberg)</span> →
+          <span class="tag gold">Gold (dbt + Trino)</span> →
+          <span class="tag teal">Consumo (Superset · Streamlit · notebooks)</span>
         </p>
         <div class="grid cols-4" style="gap:10px">
           <div class="card" style="padding:11px 12px">
@@ -352,13 +352,13 @@
           </div>
           <div class="card" style="padding:11px 12px">
             <h3 style="font-size:12.5px">Apache Iceberg</h3>
-            <p style="font-size:11px">Formato ACID da Silver/Gold — snapshots,
-            time travel. Preferido a Delta Lake por ser <strong>multi-engine
+            <p style="font-size:11px">Formato ACID da Silver/Gold (snapshots,
+            time travel). Preferido a Delta Lake por ser <strong>multi-engine
             aberto</strong>: Spark e Trino leem/escrevem as mesmas tabelas.</p>
           </div>
           <div class="card" style="padding:11px 12px">
             <h3 style="font-size:12.5px">Hive Metastore</h3>
-            <p style="font-size:11px">Catálogo único — o que faz Spark e
+            <p style="font-size:11px">Catálogo único, o que faz Spark e
             Trino enxergarem as mesmas tabelas. Backing store no Postgres
             (DB <code>metastore</code>).</p>
           </div>
@@ -376,13 +376,13 @@
           </div>
           <div class="card" style="padding:11px 12px">
             <h3 style="font-size:12.5px">Airflow</h3>
-            <p style="font-size:11px">Orquestra as 4 DAGs — por
-            <strong>Dataset</strong>, não horário fixo (a próxima só dispara
+            <p style="font-size:11px">Orquestra as 4 DAGs (por
+            <strong>Dataset</strong>, não horário fixo, a próxima só dispara
             quando a anterior termina). Padrão de mercado.</p>
           </div>
           <div class="card" style="padding:11px 12px">
             <h3 style="font-size:12.5px">Docker / Compose</h3>
-            <p style="font-size:11px">Empacota e reproduz o stack inteiro —
+            <p style="font-size:11px">Empacota e reproduz o stack inteiro,
             local e no servidor. Preferido a Kubernetes pelo
             <strong>escopo</strong>: time pequeno, um comando sobe tudo.</p>
           </div>
@@ -390,8 +390,20 @@
       </div>
     </section>
 
+    <section class="slide" data-title="Arquitetura">
+      <div class="eyebrow">05) Arquitetura</div>
+      <h1>Tudo junto, de ponta a ponta</h1>
+      <div class="slide-body" style="max-width:1180px">
+        <div style="height:582px; display:flex; align-items:center; justify-content:center;
+                    background:#fff; border:1px solid var(--rule); border-radius:12px; padding:8px;">
+          <img src="assets/arquitetura-diagrama.svg" alt="Diagrama de arquitetura completo (fontes, Bronze, Silver, Gold, ML/IA, consumo, governança)"
+               style="max-width:100%; max-height:100%; object-fit:contain;">
+        </div>
+      </div>
+    </section>
+
     <section class="slide" data-title="Interfaces Gráficas">
-      <div class="eyebrow">05 — Fotos das Interfaces Gráficas</div>
+      <div class="eyebrow">06) Fotos das Interfaces Gráficas</div>
       <h1>Capturas reais do ambiente em produção</h1>
       <div class="slide-body" style="max-width:1150px">
         <div style="display:flex; flex-direction:column; gap:12px; height:568px">
@@ -399,42 +411,42 @@
             <div class="card browser-card">
               <div class="browser-chrome">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span class="url">100.69.31.14:9870 — Hadoop HDFS · Browse Directory</span>
+                <span class="url">100.69.31.14:9870 (Hadoop HDFS · Browse Directory)</span>
               </div>
               <div class="shot-wrap">
-                <img src="assets/screenshot-hdfs.png" alt="HDFS NameNode UI — diretório /bronze">
+                <img src="assets/screenshot-hdfs.png" alt="HDFS NameNode UI (diretório /bronze)">
               </div>
-              <div class="shot-caption">/bronze — contratos, empenhos, ordem_bancaria_orcamentaria, unidade_gestora</div>
+              <div class="shot-caption">/bronze (contratos, empenhos, ordem_bancaria_orcamentaria, unidade_gestora)</div>
             </div>
             <div class="card browser-card">
               <div class="browser-chrome">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span class="url">100.69.31.14:8080 — Apache Airflow · DAGs</span>
+                <span class="url">100.69.31.14:8080 (Apache Airflow · DAGs)</span>
               </div>
               <div class="shot-wrap">
-                <img src="assets/screenshot-airflow.png" alt="Airflow — grid das 4 DAGs encadeadas por Dataset">
+                <img src="assets/screenshot-airflow.png" alt="Airflow (grid das 4 DAGs encadeadas por Dataset)">
               </div>
-              <div class="shot-caption">4 DAGs — bronze_extract → silver_transform → gold_load → ml_inference</div>
+              <div class="shot-caption">4 DAGs (bronze_extract → silver_transform → gold_load → ml_inference)</div>
             </div>
             <div class="card browser-card">
               <div class="browser-chrome">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span class="url">100.69.31.14:8085/ui — Trino · Cluster Overview</span>
+                <span class="url">100.69.31.14:8085/ui (Trino · Cluster Overview)</span>
               </div>
               <div class="shot-wrap">
-                <img src="assets/screenshot-trino.png" alt="Trino — monitor de queries reais rodando contra a Gold">
+                <img src="assets/screenshot-trino.png" alt="Trino (monitor de queries reais rodando contra a Gold)">
               </div>
-              <div class="shot-caption">Query real de ranking de órgãos + coleta de auditoria ao vivo</div>
+              <div class="shot-caption">Query real de ranking de órgãos, coleta de auditoria ao vivo</div>
             </div>
           </div>
           <div class="grid cols-2" style="flex:1; min-height:0">
             <div class="card browser-card">
               <div class="browser-chrome">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span class="url">DBeaver — JDBC trino://100.69.31.14:8085/iceberg</span>
+                <span class="url">DBeaver (JDBC trino://100.69.31.14:8085/iceberg)</span>
               </div>
               <div class="shot-wrap">
-                <img src="assets/screenshot-dbeaver.png" alt="DBeaver — tabelas da Gold"
+                <img src="assets/screenshot-dbeaver.png" alt="DBeaver (tabelas da Gold)"
                      onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
                 <div class="shot-placeholder">
                   <strong style="color:var(--ink)">Print pendente</strong>
@@ -443,17 +455,17 @@
                   salve o print como<br><code>slide-html/assets/screenshot-dbeaver.png</code>.</span>
                 </div>
               </div>
-              <div class="shot-caption">iceberg.gold.* — dims + fatos vistos por um cliente SQL de terceiros</div>
+              <div class="shot-caption">iceberg.gold.* (dims + fatos vistos por um cliente SQL de terceiros)</div>
             </div>
             <div class="card browser-card">
               <div class="browser-chrome">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span class="url">localhost:5000 — MLflow · Experiment Tracking</span>
+                <span class="url">localhost:5000 (MLflow · Experiment Tracking)</span>
               </div>
               <div class="shot-wrap">
-                <img src="assets/screenshot-mlflow.png" alt="MLflow — runs dos Modelos 1 e 2, params/métricas/artefato por execução">
+                <img src="assets/screenshot-mlflow.png" alt="MLflow (runs dos Modelos 1 e 2, params/métricas/artefato por execução)">
               </div>
-              <div class="shot-caption">2 experimentos — anomaly_detection e payment_forecast, params/métricas/modelo por execução</div>
+              <div class="shot-caption">2 experimentos (anomaly_detection e payment_forecast, params/métricas/modelo por execução)</div>
             </div>
           </div>
         </div>
@@ -461,21 +473,21 @@
     </section>
 
     <section class="slide" data-title="Painel Streamlit">
-      <div class="eyebrow">06 — Painel Streamlit</div>
+      <div class="eyebrow">07) Painel Streamlit</div>
       <h1>Da Gold para a área de negócio</h1>
       <div class="slide-body">
         <p>O painel de negócio (Streamlit) consome os mesmos
-        dados de <code>iceberg.gold.*</code> via Trino — os números abaixo são reais,
+        dados de <code>iceberg.gold.*</code> via Trino, os números abaixo são reais,
         consultados direto da Gold em produção.</p>
 
         <div class="grid cols-3" style="margin-top:10px">
           <div class="card">
             <span class="stat big">R$ 47,8 bi</span>
-            <p style="margin:0;font-size:12.5px">valor total contratado — 216.358 contratos</p>
+            <p style="margin:0;font-size:12.5px">valor total contratado (216.358 contratos)</p>
           </div>
           <div class="card">
             <span class="stat big">R$ 35,9 bi</span>
-            <p style="margin:0;font-size:12.5px">valor já pago — <span class="kicker-num">75,1%</span> do contratado</p>
+            <p style="margin:0;font-size:12.5px">valor já pago (<span class="kicker-num">75,1%</span> do contratado)</p>
           </div>
           <div class="card">
             <span class="stat big">2.934</span>
@@ -488,13 +500,13 @@
             <h3>Principais achados</h3>
             <p style="font-size:13px">Os <strong>3 maiores órgãos</strong> (Saúde, Educação, Obras
             Públicas) concentram sozinhos <span class="kicker-num">~45%</span>
-            de todo o valor contratado — Saúde lidera com R$ 8,78 bi. A
+            de todo o valor contratado, Saúde lidera com R$ 8,78 bi. A
             concentração é um sinal de onde o controle de gasto público mais
             importa, e de onde vale mais a pena olhar de perto.</p>
           </div>
           <div class="card">
             <h3>Gancho para a análise em ML</h3>
-            <p style="font-size:13px">Números agregados respondem "quanto" e "quem" — mas não
+            <p style="font-size:13px">Números agregados respondem "quanto" e "quem", mas não
             "esse contrato específico é normal?" nem "quanto esse órgão vai
             precisar pagar no próximo trimestre?". São exatamente essas duas
             perguntas que os modelos de Machine Learning respondem a seguir.</p>
@@ -504,18 +516,18 @@
     </section>
 
     <section class="slide" data-title="Machine Learning">
-      <div class="eyebrow">07 — Machine Learning</div>
+      <div class="eyebrow">08) Machine Learning</div>
       <h1>Dois modelos, rodando em produção via DAG 4</h1>
       <div class="slide-body" style="max-width:1110px">
         <div class="grid cols-2">
           <div class="card">
-            <h3>Modelo 1 — Detecção de anomalias</h3>
+            <h3>Modelo 1 (Detecção de anomalias)</h3>
             <p style="font-size:12.5px;margin-bottom:6px">
-              <code>IsolationForest</code> (scikit-learn), não supervisionado —
+              <code>IsolationForest</code> (scikit-learn), não supervisionado,
               não existe rótulo de "contrato irregular" em nenhuma fonte.</p>
             <p style="font-size:12px;opacity:.9;margin:0 0 6px">
               400 árvores de decisão, com a sensibilidade calibrada
-              automaticamente pela distribuição real do score — não por um
+              automaticamente pela distribuição real do score, não por um
               corte fixo arbitrário.
             </p>
             <p style="font-size:12.5px;margin-bottom:5px">Features: valor,
@@ -528,12 +540,12 @@
             <span style="font-size:11.5px;color:var(--ink-dim)"> flagados (10,9%)</span>
           </div>
           <div class="card">
-            <h3>Modelo 2 — Previsão de pagamentos</h3>
+            <h3>Modelo 2 (Previsão de pagamentos)</h3>
             <p style="font-size:12.5px;margin-bottom:6px">
-              <code>XGBRegressor</code> por quantil — prevê o valor que cada
+              <code>XGBRegressor</code> por quantil, prevê o valor que cada
               órgão vai pagar no <strong>próximo trimestre</strong>.</p>
             <p style="font-size:12px;opacity:.9;margin:0 0 6px">
-              Três previsões por órgão — piso, valor central e teto — formando
+              Três previsões por órgão (piso, valor central e teto), formando
               uma faixa de confiança em vez de um número único.
             </p>
             <p style="font-size:12.5px;margin-bottom:5px">Features: lag do
@@ -548,10 +560,10 @@
           </div>
         </div>
         <div class="card" style="margin-top:12px">
-          <h3>MLflow — rastreamento de experimentos</h3>
+          <h3>MLflow (rastreamento de experimentos)</h3>
           <p style="font-size:12.5px">Cada execução loga hiperparâmetros,
           métricas (score médio, % flagado, cobertura de lag) e o modelo
-          serializado — sem servidor dedicado, backend em arquivo local.</p>
+          serializado, sem servidor dedicado, backend em arquivo local.</p>
           <p class="mono" style="font-size:11.5px;background:var(--bg);padding:6px 10px;border-radius:8px;margin:6px 0 0">
             mlflow ui --backend-store-uri file://$(pwd)/models/artifacts/mlruns
           </p>
@@ -560,13 +572,13 @@
     </section>
 
     <section class="slide" data-title="Conclusão">
-      <div class="eyebrow">08 — Conclusão</div>
+      <div class="eyebrow">09) Conclusão</div>
       <h1>De dado cru e sem trilha a lakehouse em produção</h1>
       <div class="slide-body">
         <p>Duas fontes públicas sem chave confiável, sem PK, com data em
         <code>TEXT</code> e erro de digitação na própria API viraram uma base
-        analítica <strong>testada, versionada e observável</strong> — Bronze
-        → Silver → Gold, com Machine Learning e IA generativa rodando
+        analítica <strong>testada, versionada e observável</strong> (Bronze
+        → Silver → Gold), com Machine Learning e IA generativa rodando
         automaticamente, todos os dias, sem intervenção manual.</p>
 
         <div class="grid cols-3" style="margin-top:12px">
@@ -576,7 +588,7 @@
           </div>
           <div class="card" style="border-color:var(--silver)">
             <span class="stat big" style="color:var(--silver)">6</span>
-            <p style="margin:0;font-size:12.5px">jobs de CI/CD — de lint a deploy automatizado</p>
+            <p style="margin:0;font-size:12.5px">jobs de CI/CD (de lint a deploy automatizado)</p>
           </div>
           <div class="card" style="border-color:var(--gold)">
             <span class="stat big">2</span>
@@ -585,10 +597,10 @@
         </div>
 
         <hr class="rule">
-        <p>A maior lição não foi nenhuma ferramenta isolada — foi tratar um
+        <p>A maior lição não foi nenhuma ferramenta isolada, foi tratar um
         trabalho acadêmico com a mesma disciplina de um pipeline real:
         <strong>nada muda em produção sem ser provado antes</strong>, todo
-        erro relevante vira teste automatizado, e todo achado — bom ou ruim —
+        erro relevante vira teste automatizado, e todo achado (bom ou ruim)
         fica registrado onde o próximo colega (ou avaliador) consegue ver.</p>
 
         <p class="mono" style="color:var(--ink-dim);margin-top:16px">

@@ -213,17 +213,15 @@
     <section class="slide" data-title="Ambiente de Trabalho">
       <div class="eyebrow">01 — Ambiente de Trabalho</div>
       <h1>Um laboratório real, não uma maquete</h1>
-      <div class="slide-body">
-        <div class="grid cols-2">
+      <div class="slide-body" style="max-width:1110px">
+        <div class="grid cols-3">
           <div class="card">
-            <h3>Equipe</h3>
-            <p style="font-size:13px">
-              <strong>Jaime</strong> — engenharia geral, orquestração (Airflow) e infraestrutura/CI-CD·
-              <strong>Nara</strong> — ingestão (extractors API/Postgres) e painel de negócio (Streamlit)·
-              <strong>Carlos</strong> — transformação Silver e decisões de modelagem·
-              <strong>Fernanda</strong> — Fase 3, Machine Learning/IA (dona da atividade)·
-              <strong>Benjamim</strong> — validação de dados e documentação (dicionário de dados).
-            </p>
+            <h3>Escopo dos dados</h3>
+            <p style="font-size:13px"><strong>2022 a 2026</strong> · cerca de
+            <strong>3 milhões de registros</strong> processados (1,38M
+            empenhos + 1,40M ordens bancárias + 216 mil contratos) —
+            extraídos, validados e versionados automaticamente, todos os
+            dias.</p>
           </div>
           <div class="card">
             <h3>Laboratório de testes e experimentos</h3>
@@ -233,66 +231,62 @@
             o Trino por OOM) foram primeiro reproduzidas manualmente numa rede
             Docker isolada no próprio servidor, nunca direto em produção.</p>
           </div>
-        </div>
-        <div class="grid cols-2" style="margin-top:14px">
           <div class="card">
             <h3>Servidor Ubuntu — acesso via SSH</h3>
             <p style="font-size:13px"><code>ssh dataadm@100.69.31.14</code> — alcançável só pela
             rede privada <strong>Tailscale</strong> do time, nunca exposto à
-            internet aberta. <strong>24h no ar</strong>, uso concomitante por
-            toda a equipe — por isso existe uma auditoria de acesso própria
-            (sessão SSH + comando executado, mesmo via <code>sudo</code>).</p>
-          </div>
-          <div class="card">
-            <h3>Colaboração via GitHub</h3>
-            <p style="font-size:13px">Branches por frente de trabalho, Pull Requests com revisão
-            antes do merge na <code>main</code>, histórico completo de decisão
-            técnica nos commits — inclusive esta própria apresentação, feita
-            slide a slide, cada um com seu PR.</p>
+            internet aberta. <strong>24h no ar</strong>, uso concomitante —
+            por isso existe uma auditoria de acesso própria (sessão SSH +
+            comando executado, mesmo via <code>sudo</code>).</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="slide" data-title="CI/CD">
-      <div class="eyebrow">02 — CI/CD</div>
-      <h1>Nada chega ao servidor sem passar por 6 portões</h1>
+      <div class="eyebrow">02 — CI/CD &amp; Gestão do Projeto</div>
+      <h1>Da entrega automatizada à organização do trabalho</h1>
       <div class="slide-body" style="max-width:1110px">
-        <p>Todo push roda <code>.github/workflows/ci.yml</code> — 6 jobs em paralelo,
-        cada um cobrindo uma camada diferente do pipeline.</p>
-        <div class="grid cols-3" style="margin-top:10px">
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">1 · lint</h3>
-            <p style="font-size:12px;margin:0">Ruff — lint e formatação (<code>check</code> + <code>format --check</code>) em todo o repositório.</p>
+        <h2 style="margin-top:0">Integração e entrega contínua</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3 style="font-size:13px">6 jobs de CI, em paralelo, a cada push</h3>
+            <p style="font-size:12px;margin:0;line-height:1.7">
+              <code>lint</code> — Ruff (check + format)<br>
+              <code>tests</code> — suíte leve, tudo mockado<br>
+              <code>streamlit-smoke</code> — AppTest do painel, Trino mockado<br>
+              <code>spark-tests</code> — Spark+Iceberg local, idempotência do MERGE<br>
+              <code>dbt</code> — parse dos modelos da Gold<br>
+              <code>dbt-integration</code> — build real contra Trino+Iceberg+HMS efêmero
+            </p>
           </div>
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">2 · tests</h3>
-            <p style="font-size:12px;margin:0">Suíte leve — extractors, validators, transformers, reconciliação, tudo mockado.</p>
-          </div>
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">3 · streamlit-smoke</h3>
-            <p style="font-size:12px;margin:0"><code>AppTest</code> do painel de negócio, Trino mockado — pega regressão de UI antes do deploy.</p>
-          </div>
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">4 · spark-tests</h3>
-            <p style="font-size:12px;margin:0">Spark + Iceberg local de verdade — idempotência do <code>MERGE INTO</code> da Silver.</p>
-          </div>
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">5 · dbt</h3>
-            <p style="font-size:12px;margin:0"><code>dbt parse</code> — valida os modelos da Gold sem precisar de um Trino no ar.</p>
-          </div>
-          <div class="card" style="padding:12px 14px">
-            <h3 style="font-size:13px">6 · dbt-integration</h3>
-            <p style="font-size:12px;margin:0"><code>dbt build</code> real contra Trino+Iceberg+Hive Metastore efêmero em Docker.</p>
+          <div class="card">
+            <h3 style="font-size:13px">Deploy — só com os 6 jobs verdes, só na main</h3>
+            <p style="font-size:12px;margin:0">Job de <strong>deploy</strong> entra na rede privada do
+            servidor via SSH sobre Tailscale (chave dedicada, restrita ao script de deploy) e aplica o
+            código em segundos. Camada extra: <code>auto-sync.py</code> roda em cron no servidor a cada
+            15min e só aplica se a Checks API do GitHub confirmar CI verde.</p>
           </div>
         </div>
-        <div class="card" style="margin-top:14px">
-          <h3>Entrega contínua — só depois dos 6 jobs verdes, só na <code>main</code></h3>
-          <p style="font-size:13px;margin-bottom:6px">Um job de <strong>deploy</strong> entra na rede privada do
-          servidor via SSH sobre Tailscale (chave dedicada, restrita a rodar só o script de deploy) e aplica o
-          código real em segundos. Camada extra de segurança: <code>auto-sync.py</code> roda em cron no próprio
-          servidor a cada 15min, e só aplica se a Checks API do GitHub confirmar CI verde — rede de segurança
-          caso o job do GitHub Actions falhe.</p>
+
+        <h2>Gestão do projeto — GitHub</h2>
+        <div class="grid cols-3">
+          <div class="card" style="padding:12px 14px">
+            <h3 style="font-size:13px">Issues</h3>
+            <p style="font-size:12px;margin:0">Rastreamento de tarefas e pendências do time
+            (ex: prazo final, escolha de ferramenta de dataviz) — histórico de quando cada
+            decisão foi aberta e fechada.</p>
+          </div>
+          <div class="card" style="padding:12px 14px">
+            <h3 style="font-size:13px">Projects</h3>
+            <p style="font-size:12px;margin:0">Quadro Kanban acompanhando o andamento das
+            frentes de trabalho abertas, em progresso e concluídas.</p>
+          </div>
+          <div class="card" style="padding:12px 14px">
+            <h3 style="font-size:13px">Branches + Pull Requests</h3>
+            <p style="font-size:12px;margin:0">Branch por frente de trabalho, revisão via PR
+            antes do merge na <code>main</code> — inclusive esta apresentação, slide a slide.</p>
+          </div>
         </div>
       </div>
     </section>
@@ -468,7 +462,7 @@
       <div class="eyebrow">06 — Painel Streamlit</div>
       <h1>Da Gold para a área de negócio</h1>
       <div class="slide-body">
-        <p>O painel de negócio (Streamlit, construído pela Nara) consome os mesmos
+        <p>O painel de negócio (Streamlit) consome os mesmos
         dados de <code>iceberg.gold.*</code> via Trino — os números abaixo são reais,
         consultados direto da Gold em produção.</p>
 
@@ -595,7 +589,7 @@
         fica registrado onde o próximo colega (ou avaliador) consegue ver.</p>
 
         <p class="mono" style="color:var(--ink-dim);margin-top:16px">
-          Jaime · Nara · Carlos · Fernanda · Benjamim — Obrigado.
+          Obrigado.
         </p>
       </div>
     </section>

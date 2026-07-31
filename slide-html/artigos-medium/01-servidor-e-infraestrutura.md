@@ -1,17 +1,17 @@
-# Construindo um lakehouse de dados públicos (parte 1): o servidor antes dos dados
+# Construindo um lakehouse de dados públicos (parte 1): preparando o terreno
 
-*Esta é a primeira de seis partes contando como transformamos duas fontes públicas de dados do Ceará, sem chave confiável e sem trilha de auditoria, em um lakehouse de verdade rodando em produção. Antes de falar de qualquer linha de dado, precisamos falar do chão onde tudo isso roda: um servidor Ubuntu compartilhado, que já existia antes do projeto começar.*
+*Esta é a primeira de seis partes contando como transformamos duas fontes públicas de dados do Ceará, sem chave confiável e sem trilha de auditoria, em um lakehouse de verdade rodando em produção. Antes de falar de qualquer linha de dado, precisamos falar do chão onde tudo isso roda: um servidor Ubuntu, provisionado especificamente para este projeto.*
 
-## Um servidor que não nasceu para este projeto
+## Um servidor pensado desde o início para simular produção
 
-A primeira decisão de infraestrutura deste projeto, na prática, já estava tomada quando começamos: existia um servidor Ubuntu, usado por outras atividades de um curso, com parte do ambiente de Big Data já no ar (um Hadoop HDFS e um pedaço do Airflow). Não era um ambiente pensado para o nosso pipeline especificamente, e não íamos derrubar nada disso para começar do zero.
+A primeira decisão deste projeto não foi de ferramenta — foi de ambiente. Em vez de cada pessoa do time montar (e derrubar) o pipeline na própria máquina, decidimos provisionar um servidor Ubuntu único, compartilhado por todo o time, criado especificamente para este projeto. Duas motivações concretas levaram a essa escolha: trabalhar como equipe de verdade, todo mundo apontando para o mesmo ambiente vivo em vez de "na minha máquina funciona"; e simular um contexto mais próximo do real — acesso restrito, múltiplas pessoas compartilhando a mesma infraestrutura ao mesmo tempo, disciplina de deploy — em vez de um exercício acadêmico isolado, rodando sozinho no notebook de alguém.
 
-Essa restrição mudou como projetamos tudo o que veio depois. Em vez de desenhar a infraestrutura ideal e depois procurar onde encaixá-la, desenhamos um **overlay**: um conjunto adicional de peças (catálogo de metadados, motor de processamento, motor de consulta e a ferramenta de construção da camada final) que sobe ao lado do que já existia, na mesma rede Docker, sem tocar no que já funcionava. Foi uma escolha deliberada — reduz risco de quebrar algo que outras pessoas dependem, e reduz o custo de manter duas versões de infraestrutura sincronizadas.
+O servidor foi crescendo em camadas, seguindo as próprias fases do projeto: a fase de ingestão (Bronze) já exigiu um sistema de arquivos distribuído (HDFS) e um orquestrador (Airflow) no ar; quando o projeto avançou para as camadas de transformação e modelagem (Silver e Gold), um novo conjunto de peças — catálogo de metadados, motor de processamento distribuído, motor de consulta e a ferramenta de construção da camada final — subiu ao lado do que já estava rodando, na mesma rede Docker, sem precisar recriar nada do que a fase anterior já tinha validado.
 
 O resultado é que este projeto tem **duas descrições de infraestrutura** diferentes, e não por acidente:
 
 - Uma pensada para qualquer pessoa reproduzir o projeto inteiro do zero, na própria máquina — importante para fins de portfólio e avaliação.
-- Uma pensada para o servidor real do time, que soma às ferramentas do curso só as peças novas que o projeto precisou.
+- Uma pensada para o servidor real do time, adaptada às particularidades desse ambiente específico (nome de rede, topologia dos containers) que foram sendo fixadas conforme cada fase do projeto entrava no ar.
 
 Uma verificação automática compara as duas periodicamente, para avisar caso alguém atualize uma e esqueça de replicar a mudança na outra.
 
@@ -50,7 +50,7 @@ A segunda camada existe como rede de segurança para o caso de a primeira falhar
 
 ## Um problema real de rede, resolvido na raiz
 
-Nem tudo em um servidor compartilhado, com histórico de outros usos, vem pronto. Em um certo ponto, descobrimos que o servidor só tinha rota de saída via IPv6 — a interface de rede cabeada nunca teve IPv4 habilitado no arquivo de configuração de rede. Na prática, isso significava que o servidor não conseguia falar diretamente com a API pública de dados nem com o GitHub, e a extração de dados dependia de um relay rodando em uma máquina pessoal só para contornar isso.
+Nem tudo num servidor provisionado do zero vem configurado do jeito que se espera de saída. Em um certo ponto, descobrimos que o servidor só tinha rota de saída via IPv6 — a interface de rede cabeada nunca teve IPv4 habilitado no arquivo de configuração de rede. Na prática, isso significava que o servidor não conseguia falar diretamente com a API pública de dados nem com o GitHub, e a extração de dados dependia de um relay rodando em uma máquina pessoal só para contornar isso.
 
 O conserto não foi outro workaround por cima do workaround — foi corrigir a causa raiz: habilitar IPv4 na interface certa do próprio host. Depois de confirmado que a API, o GitHub e o gerenciador de pacotes Python respondiam diretamente, sem passar pelo relay, removemos o contorno interno que forçava o nome da API a resolver para o IP do relay dentro dos containers do Airflow. O relay pessoal, que existia apenas por causa dessa limitação, pôde ser desligado.
 

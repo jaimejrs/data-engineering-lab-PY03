@@ -225,11 +225,9 @@
           </div>
           <div class="card">
             <h3>Laboratório de testes e experimentos</h3>
-            <p style="font-size:13px">Nada vai para produção sem ser provado antes: stack isolada de
-            Trino+Iceberg+Hive Metastore sobe do zero a cada execução de CI, e
-            mudanças arriscadas (permissão de volume, compaction que derrubava
-            o Trino por OOM) foram primeiro reproduzidas manualmente numa rede
-            Docker isolada no próprio servidor, nunca direto em produção.</p>
+            <p style="font-size:13px">Nada vai para produção sem ser testado antes: o ambiente
+            completo sobe do zero a cada execução de CI, e qualquer mudança arriscada é
+            reproduzida antes num ambiente isolado, nunca direto em produção.</p>
           </div>
           <div class="card">
             <h3>Servidor Ubuntu — acesso via SSH</h3>
@@ -318,23 +316,13 @@
           </div>
           <div class="card">
             <h3>Problemas reais na fonte</h3>
-            <p style="font-size:12.5px">Nenhuma tabela do Postgres tem <strong>PRIMARY KEY</strong>
-            declarada; datas são <code>TEXT</code>, não
-            <code>DATE</code>/<code>TIMESTAMP</code>; a API erra a própria
-            chave de paginação (<code>"sumary"</code>, falta o 2º "m"); e as
-            chaves de junção entre as duas fontes são fracas — <code>num_spu</code>
-            × <code>codprocesso</code> casa em só <span class="stat">~6%</span>
-            dos casos.</p>
+            <p style="font-size:12.5px">Nenhuma tabela tem <strong>chave primária</strong>
+            declarada, datas vêm como texto solto, a própria API tem um erro
+            de digitação num campo-chave, e as chaves que ligam as duas
+            fontes são fracas — só <span class="stat">~6%</span> de
+            correspondência real.</p>
           </div>
         </div>
-
-        <hr class="rule">
-        <p class="mono" style="font-size:12px">
-          Outros achados reais: servidor com egress só IPv6 (API é IPv4-only) ·
-          carga sem <code>stream_results=True</code> estourava memória no
-          Postgres (~1,4M linhas) · datas em formato <code>DD/MM/YYYY</code>,
-          não ISO.
-        </p>
       </div>
     </section>
 
@@ -525,9 +513,10 @@
             <p style="font-size:12.5px;margin-bottom:6px">
               <code>IsolationForest</code> (scikit-learn), não supervisionado —
               não existe rótulo de "contrato irregular" em nenhuma fonte.</p>
-            <p class="mono" style="font-size:11px;opacity:.85;margin:0 0 6px">
-              n_estimators=400 · contamination="auto" · random_state=42<br>
-              score = MinMaxScaler(-decision_function(X))
+            <p style="font-size:12px;opacity:.9;margin:0 0 6px">
+              400 árvores de decisão, com a sensibilidade calibrada
+              automaticamente pela distribuição real do score — não por um
+              corte fixo arbitrário.
             </p>
             <p style="font-size:12.5px;margin-bottom:5px">Features: valor,
             dias de vigência, modalidade e tipo de objeto (one-hot), flag de
@@ -543,9 +532,9 @@
             <p style="font-size:12.5px;margin-bottom:6px">
               <code>XGBRegressor</code> por quantil — prevê o valor que cada
               órgão vai pagar no <strong>próximo trimestre</strong>.</p>
-            <p class="mono" style="font-size:11px;opacity:.85;margin:0 0 6px">
-              objective="reg:quantileerror" · quantile_alpha=[0.1, 0.5, 0.9]<br>
-              hiperparâmetros por validação cruzada walk-forward (grid search)
+            <p style="font-size:12px;opacity:.9;margin:0 0 6px">
+              Três previsões por órgão — piso, valor central e teto — formando
+              uma faixa de confiança em vez de um número único.
             </p>
             <p style="font-size:12.5px;margin-bottom:5px">Features: lag do
             trimestre anterior, lag do mesmo trimestre do ano anterior, valor

@@ -1,5 +1,14 @@
 # Relatório de Progresso — Fases 1 e 2
 
+> **Nota de sucessão (31/07/2026):** este relatório é um retrato do projeto em
+> 19/07/2026 (só a Fase 1 concluída) — mantido como registro histórico, não
+> atualizado desde então. As Fases 2 e 3 (Silver/Gold/ML/IA) foram concluídas
+> logo depois; para o status atual do projeto, ver
+> [`diagrama-arquitetura.md`](diagrama-arquitetura.md) ("Status resumido").
+> O "próximo passo recomendado" no final deste documento (retomá-lo como
+> relatório final do §6.2) não chegou a acontecer — não existe hoje um
+> relatório final dedicado à análise dos resultados dos modelos de ML.
+
 **Este NÃO é o relatório final exigido pelo §6.2 do `Trabalho Final.pdf`** (que pede análise
 dos resultados dos modelos de ML — Fase 3, ainda não iniciada). É um relatório de status,
 para acompanhamento do andamento real do projeto frente ao cronograma.

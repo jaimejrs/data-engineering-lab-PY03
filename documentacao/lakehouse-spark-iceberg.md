@@ -19,9 +19,17 @@ a ser **tabelas Apache Iceberg gerenciadas sobre o HDFS**, processadas por um
 - **Schema/partition evolution** geridos pelo Iceberg.
 - O Hadoop finalmente é usado para **compute** (Spark), não só storage.
 
-**Não muda:** a **Bronze** continua raw (JSON via WebHDFS, DAG 1 intacta — best
-practice de medalhão). A **Gold** continua sendo o Postgres DW dimensional; a
-lógica de `sql/ddl_dw.sql` e de `src/loaders/dw_loader.py` é reaproveitada intacta.
+**Não muda (neste momento — ver nota abaixo):** a **Bronze** continua raw
+(JSON via WebHDFS, DAG 1 intacta — best practice de medalhão). A **Gold**
+continua sendo o Postgres DW dimensional; a lógica de `sql/ddl_dw.sql` e de
+`src/loaders/dw_loader.py` é reaproveitada intacta.
+
+> **Atualização (23/07/2026, um dia depois deste documento):** a Gold
+> TAMBÉM migrou para Iceberg, agora construída de forma declarativa via
+> dbt-trino em vez do Postgres DW/`dw_loader.py` (hoje legado) — ver
+> [`gold-dbt-trino.md`](gold-dbt-trino.md). O parágrafo acima descreve um
+> estado intermediário (só a Silver migrada), mantido aqui como registro
+> histórico da evolução em duas etapas.
 
 ## Arquitetura
 

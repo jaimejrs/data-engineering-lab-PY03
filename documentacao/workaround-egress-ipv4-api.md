@@ -3,6 +3,14 @@
 Última atualização: 19/07/2026 · Aplicado e validado em produção (ver `docs/checklist.md`
 e `docs/relatorio-orquestracao-dag1.md` para o histórico anterior a esta correção).
 
+> **Descontinuado em 24/07/2026:** a causa raiz (sem rota IPv4 padrão no
+> host) foi corrigida na origem (`dhcp4: true` no netplan do
+> `datalab-server`) — `extract_api` não depende mais do relay via
+> `jotav15-1` descrito abaixo. Documento mantido como histórico da
+> investigação/correção; ver
+> [`diagrama-arquitetura.md`](diagrama-arquitetura.md), nota "Egress IPv4",
+> para o estado atual.
+
 ## Causa raiz (confirmada, não é config de container)
 
 O `datalab-server` **não tem nenhuma rota IPv4 padrão** — só saída IPv6. Confirmado via:

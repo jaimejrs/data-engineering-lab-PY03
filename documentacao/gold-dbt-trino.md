@@ -1,6 +1,7 @@
 # Gold com dbt-trino sobre Iceberg (lakehouse puro)
 
-Última atualização: 23/07/2026. Complementa
+Última atualização: 23/07/2026 (conteúdo original); notas de 31/07/2026
+adicionadas onde indicado. Complementa
 [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md) (camada Silver).
 
 ## Por que / o que muda
@@ -29,11 +30,20 @@ flowchart LR
         T["dbt-trino: sources -> staging (ephemeral) -> dims/fatos"]
     end
     subgraph Gold["iceberg.gold.* (Trino escreve)"]
-        G[("dim_credor · dim_orgao · dim_modalidade · dim_tempo\nfato_contrato · fato_empenho")]
+        G[("dim_credor · dim_orgao · dim_modalidade · dim_tempo\nfato_contrato · fato_empenho · fato_ordem_bancaria")]
     end
     S --> T --> G
     G -->|SQL / BI| T
 ```
+
+> **Nota (31/07/2026):** `fato_ordem_bancaria` foi adicionado em 24/07/2026
+> (a fonte já estava na Silver, sem modelo Gold — ver `docs/06-analise-critica.md`,
+> item 3, interno). Também em 26/07/2026, o catálogo `iceberg` passou a
+> separar fisicamente por propósito: `gold.*` (modelo estrela), `ml.*`
+> (saída dos modelos — `score_anomalia_contrato`, `previsao_pagamento_orgao`,
+> `relatorio_narrativo`) e `audit.*` (telemetria — `bronze_ingestao`,
+> `gold_reconciliacao`), via o macro `dbt/macros/generate_schema_name.sql`.
+> Antes, tudo vivia junto em `gold`.
 
 ## Componentes
 

@@ -1,6 +1,6 @@
 # Guia de exploração — como acessar cada etapa do projeto
 
-Última atualização: 25/07/2026. Objetivo: dar a qualquer pessoa do time (ou
+Última atualização: 31/07/2026. Objetivo: dar a qualquer pessoa do time (ou
 avaliador) o caminho mais curto pra **ver e mexer** em cada peça do pipeline —
 não só ler o código, mas rodar uma query, abrir uma UI, ler um log real.
 
@@ -27,6 +27,8 @@ não só ler o código, mas rodar uma query, abrir uma UI, ler um log real.
 | Transformação Gold | dbt docs | `cd dbt && dbt docs generate && dbt docs serve` | — (rodar localmente contra os artefatos) |
 | Notebooks / EDA | Jupyter | `localhost:8888` (token `datalab`, ver `.env`) | — (rode local, aponte pro Trino do servidor) |
 | Spark (backfills manuais) | Spark master UI | `localhost:8081` | interno à rede Docker do servidor |
+| Painel de negócio | Streamlit | — (requer o overlay do servidor, não sobe no `docker-compose.yml` raiz) | `100.69.31.14:8501` **ou** link público (Tailscale Funnel, sem VPN — ver seção 8) |
+| Painéis operacionais (infra/acesso) | Superset | — | interno à rede Docker do servidor |
 | Qualidade de código | CI (GitHub Actions) | — | `gh run list` / aba **Actions** no GitHub |
 
 ---
@@ -226,7 +228,33 @@ na primeira célula ou no `.env` montado no container.
 
 ---
 
-## 8. Qualidade de código — lint, testes, CI
+## 8. Painel de negócio — Streamlit
+
+4 abas (Visão Geral, Previsão de Pagamentos, Anomalias em Contratos, Resumo
+IA), consumindo `iceberg.gold`/`iceberg.ml` via Trino. Só existe no overlay
+do servidor (`deploy/server-lakehouse/docker-compose.yml`, serviço
+`streamlit`) — não sobe com o `docker-compose.yml` da raiz.
+
+**Acesso:**
+- **Link público** (Tailscale Funnel — funciona de qualquer rede, sem VPN):
+  `https://datalab-server.taila180c3.ts.net/`
+- **Na tailnet do time:** `http://100.69.31.14:8501`
+
+**CLI útil (no servidor, requer SSH):**
+```bash
+docker logs lakehouse_streamlit --tail 30
+docker compose -f ~/lakehouse/docker-compose.yml restart streamlit  # após trocar .py (sem mudar requirements.txt)
+docker compose -f ~/lakehouse/docker-compose.yml build streamlit    # após mudar requirements.txt
+tailscale funnel status                                              # confirma a exposição pública ativa
+```
+
+Cache de 5min por query (`@st.cache_data` em `streamlit/db.py`) — mudanças no
+dado (novo `dbt build`/re-treino de modelo) podem levar até 5min para
+aparecer no painel sem precisar reiniciar o container.
+
+---
+
+## 9. Qualidade de código — lint, testes, CI
 
 ```bash
 ruff check .              # lint (E/F/I/UP/B — ver pyproject.toml)
@@ -234,9 +262,12 @@ ruff format --check .      # formatação
 python -m pytest tests/ -v # suíte completa (mocka Trino/OpenAI — não precisa do stack no ar)
 ```
 
-CI no GitHub Actions (4 jobs a cada push): `ruff` (lint+format), `pytest`
-(suíte leve), `pytest` Spark (idempotência do `MERGE INTO`, Spark+Iceberg
-local de verdade), `dbt parse` (valida os modelos sem conectar no Trino).
+CI no GitHub Actions (6 jobs a cada push): `lint` (ruff), `tests` (pytest
+suíte leve), `streamlit-smoke` (`AppTest` do painel, Trino mockado),
+`spark-tests` (idempotência do `MERGE INTO`, Spark+Iceberg local de
+verdade), `dbt` (`dbt parse`, sem conectar no Trino), `dbt-integration`
+(`dbt build` real contra Trino+Iceberg+HMS efêmero). Só em push na `main` e
+só se os 6 passarem, roda o job de `deploy` (CD).
 
 ```bash
 gh run list --limit 5      # últimas execuções
@@ -255,5 +286,8 @@ gh run view <run_id>        # detalhe de uma execução
 | Postgres (metadados Airflow) | `100.69.31.14:5432` | uso interno — não é onde os dados de negócio ficam |
 | Postgres DW (descontinuado) | `100.69.31.14:5434` | legado — Gold real hoje é Iceberg, não este banco |
 | MLflow | sem porta fixa — `mlflow ui` sob demanda | backend de arquivo, `models/artifacts/mlruns/` |
+| Painel de negócio (Streamlit) | `100.69.31.14:8501` **ou** `https://datalab-server.taila180c3.ts.net/` | o link Funnel é a **única exceção** ao pré-requisito de Tailscale abaixo |
 
-Pré-requisito comum: estar na **Tailscale** do time para alcançar `100.69.31.14`.
+Pré-requisito comum: estar na **Tailscale** do time para alcançar
+`100.69.31.14` — exceto o painel de negócio (Streamlit), exposto
+publicamente via Tailscale Funnel, acessível de qualquer rede sem VPN.

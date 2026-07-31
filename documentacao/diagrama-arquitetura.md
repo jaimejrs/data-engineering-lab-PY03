@@ -1,13 +1,15 @@
 # Diagrama de Arquitetura — Pipeline Ceará Transparente
 
-Última atualização: 25/07/2026 — **Fases 1, 2 e 3 concluídas de ponta a ponta**,
-validadas rodando automaticamente no Airflow real do servidor (tarefa 26,
-cadeia completa Bronze→Silver→Gold→ML/IA sem intervenção manual). Evolução
-para **lakehouse** (Silver em Iceberg, Spark, Hive Metastore, Trino via dbt)
-documentada em [`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md) e
+Última atualização: 31/07/2026 — **Fases 1, 2 e 3 concluídas de ponta a
+ponta**, validadas rodando automaticamente no Airflow real do servidor
+(tarefa 26, cadeia completa Bronze→Silver→Gold→ML/IA sem intervenção
+manual), **mais um painel de negócio (Streamlit)** consumindo a Gold/ML,
+hospedado publicamente via Tailscale Funnel. Evolução para **lakehouse**
+(Silver em Iceberg, Spark, Hive Metastore, Trino via dbt) documentada em
+[`lakehouse-spark-iceberg.md`](lakehouse-spark-iceberg.md) e
 [`gold-dbt-trino.md`](gold-dbt-trino.md).
 
-## 1. Visão geral — fluxo de dados (Medallion: Bronze → Silver → Gold → ML/IA)
+## 1. Visão geral — fluxo de dados (Medallion: Bronze → Silver → Gold → ML/IA → Painel)
 
 ```mermaid
 flowchart LR
@@ -35,6 +37,12 @@ flowchart LR
         M3["IA Generativa\nLLM via API OpenAI\n(relatório narrativo)"]
     end
 
+    subgraph Painel["Painel de negócio — Streamlit"]
+        ST["4 abas: Visão Geral · Previsão\nAnomalias · Resumo (IA)"]
+    end
+
+    USER(["Qualquer usuário\n(link público)"])
+
     API -->|extract_api| B
     PG -->|extract_postgres| B
     B -->|silver_job.py — Spark| S
@@ -44,11 +52,15 @@ flowchart LR
     M1 --> M3
     M2 --> M3
     M3 -->|relatorio_narrativo| Gold
+    Gold -->|Trino, sob demanda| ST
+    ST -->|Tailscale Funnel\nhttps, sem VPN| USER
 ```
 
 **Legenda de status:** todas as camadas acima estão **✅ concluídas e
 validadas rodando de verdade dentro do Airflow**, sem workaround manual — ver
-seção "Status resumido" no final deste documento.
+seção "Status resumido" no final deste documento. O Painel é a única peça
+acessível **sem** estar na tailnet do time (Funnel expõe publicamente); todo
+o resto exige VPN Tailscale.
 
 ## 2. Orquestração — dependência entre as 4 DAGs (por Dataset)
 
@@ -99,11 +111,14 @@ flowchart LR
         TR["trino :8085\n(connector Iceberg)"]
         DBT["dbt-trino\n(container sob demanda,\nDockerOperator)"]
         JUP["jupyter :8888"]
+        SUP["superset\n(painéis operacionais)"]
+        STR["streamlit :8501\n(painel de negócio)"]
     end
     SRC_PG["PostgreSQL de origem\n(externo — infra do curso)"]
     SRC_API["API Ceará Transparente\n(externa)"]
     OPENAI[("API OpenAI\ngpt-4o-mini")]
     MLF[("models/artifacts/mlruns/\n(MLflow, arquivo local)")]
+    FUNNEL(["Tailscale Funnel\nlink público https"])
 
     AF_SCH -->|extract_postgres| SRC_PG
     AF_SCH -->|extract_api| SRC_API
@@ -123,6 +138,11 @@ flowchart LR
     AF_SCH --> PG_META
     JUP -.-> NN
     JUP -.->|EDA Silver/Gold| TR
+    SUP -->|painéis operacionais| TR
+    SUP --> PG_META
+    STR -->|Trino, gold/ml| TR
+    STR -->|relatório narrativo| OPENAI
+    STR ==>|Tailscale Funnel| FUNNEL
 ```
 
 > **No servidor real do time**, a topologia é um **overlay aditivo** sobre a
@@ -138,7 +158,7 @@ flowchart LR
 > [`workaround-egress-ipv4-api.md`](workaround-egress-ipv4-api.md) para o
 > histórico do workaround já descontinuado.
 
-## Status resumido (25/07/2026)
+## Status resumido (31/07/2026)
 
 | Camada/Componente | Status |
 |---|---|
@@ -149,12 +169,14 @@ flowchart LR
 | Reconciliação Bronze→Silver→Gold | ✅ `bronze_ingestao` + `gold_reconciliacao`, testes WARN |
 | Cluster Spark + Hive Metastore + Trino + Iceberg (HDFS) | ✅ No ar, limites de recurso configurados |
 | Modelo 1 — detecção de anomalias (Isolation Forest) | ✅ Treinado, escorado (215.839 contratos), threshold calibrável via distribuição real do score |
-| Modelo 2 — previsão de pagamentos (XGBoost quantile) | ✅ Treinado sobre `fato_ordem_bancaria` real (não mais proxy) |
-| IA Generativa — relatório narrativo (LLM) | ✅ Gerando relatórios em produção via API OpenAI |
+| Modelo 2 — previsão de pagamentos (XGBoost quantile) | ✅ Treinado sobre `fato_ordem_bancaria` real (não mais proxy), inclui previsão retroativa (`is_backtest`) pra validar previsto vs. realizado em trimestres já fechados |
+| IA Generativa — relatório narrativo (LLM) | ✅ Gerando relatórios em produção via API OpenAI, com verificação anti-alucinação (`report_validation.py`) |
 | MLflow tracking (Modelos 1 e 2) | ✅ Params/métricas/artefatos logados a cada run |
 | DAG 4 (`ml_inference`) | ✅ 4/4 tasks — `score_anomalias`, `prever_pagamentos`, `refresh_fato_contrato`, `gerar_relatorio_narrativo` |
 | Orquestração — 4 DAGs encadeadas por Dataset | ✅ Cadeia completa validada rodando automaticamente, sem intervenção manual |
-| CI (lint + testes + dbt parse) | ✅ 4 jobs verdes (`ruff`, `pytest` leve, `pytest` Spark, `dbt parse`) |
+| Painel de negócio (Streamlit, 4 abas) | ✅ Em produção, hospedado publicamente via Tailscale Funnel — acessível sem VPN, diferente do resto do stack |
+| Superset — painéis operacionais (infra/acesso) | ✅ Em produção, ver "Observabilidade e auditoria" no README |
+| CI (lint + testes + dbt) | ✅ 6 jobs de CI verdes (`lint`, `tests`, `streamlit-smoke`, `spark-tests`, `dbt`, `dbt-integration`) + 1 de deploy |
 
 Pendências conhecidas (não bloqueantes, ver
 [`03-pendencias-e-melhorias.md`](../docs/03-pendencias-e-melhorias.md) e

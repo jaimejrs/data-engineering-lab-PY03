@@ -93,9 +93,8 @@ chave lógica de dedup (`DEDUP_KEYS`) na ausência de PK real.
 **O job real da Silver em produção** — lê a Bronze (JSON), normaliza data e
 CNPJ/CPF, tipa colunas monetárias/de data, deduplica por `DEDUP_KEYS` e faz
 `MERGE INTO` na tabela Iceberg correspondente (idempotente entre execuções).
-Substituiu o caminho pandas (`silver_transformer.py`, removido — ver
-`documentacao/mapa-do-codigo.md`, nenhuma DAG o importa mais). Roda via
-`spark-submit --run-date <data>`.
+Substituiu o caminho pandas (`silver_transformer.py`, removido — nenhuma DAG
+o importa mais). Roda via `spark-submit --run-date <data>`.
 
 ### `src/spark_jobs/spark_session.py`
 Fábrica única da `SparkSession` configurada para o catálogo Iceberg sobre
@@ -268,6 +267,81 @@ arquivo (`models/artifacts/relatorios/`).
 
 ---
 
+## `streamlit/` — painel de negócio
+
+Docker próprio (`streamlit/Dockerfile`, `COPY . .` só deste diretório — não
+enxerga `src/`, por isso alguns módulos abaixo duplicam lógica que também
+existe no pipeline principal em vez de importá-la). Consome
+`iceberg.gold/ml` via Trino, com cache de 5min (`@st.cache_data`). Hospedado
+no servidor via Docker Compose (`deploy/server-lakehouse/docker-compose.yml`,
+serviço `streamlit`) e exposto publicamente por **Tailscale Funnel**
+(`tailscale funnel --bg 8501`) — qualquer pessoa acessa pelo link, sem
+precisar estar na tailnet do time (diferente de todo o resto do stack).
+
+### `streamlit/app.py`
+Entrada: carrega `.env` (raiz do projeto + `streamlit/.env` local, se
+existir), monta a sidebar (filtros globais `Ano`/`Órgão`), calcula o
+`score_threshold` do Modelo 1 (percentil dinâmico, não fixo — ver
+`config.py`) e o indicador "dado disponível até" (`MAX` de
+`fato_ordem_bancaria`, mostrado no topo de toda aba). Chama as 4
+`.render()` das abas incondicionalmente — o modelo de execução do Streamlit
+reroda o script inteiro a cada interação, então qualquer clique em qualquer
+aba reexecuta as 4 (mitigado pelo cache de 5min do `db.run_query`).
+
+### `streamlit/tabs/` — uma aba por módulo
+- `visao_geral.py` — KPIs agregados, série mensal (com truncamento de meses
+  com dado incompleto na ponta — ver `_ultimo_periodo_completo`), top 10
+  órgãos por valor pago, drill-down por órgão.
+- `previsao.py` — Modelo 2 (previsão trimestral), compara com
+  `fato_ordem_bancaria` real (não `fato_contrato.valor_pago` — ver
+  docstring do módulo para o porquê), inclui a previsão retroativa
+  (`is_backtest`) pra comparar previsto vs. realizado em trimestres já
+  fechados.
+- `anomalias.py` — Modelo 1 (score de anomalia), distribuição, ranking de
+  órgãos por contratos atípicos, tabela final com drill-down por clique no
+  histograma.
+- `resumo_ia.py` — relatório narrativo sob demanda (`ai_report.py`), prévia
+  estática antes do clique, exportação em PDF (`pdf_export.py`).
+
+### `streamlit/db.py`
+Conexão com o Trino (reimplementa, não importa, o padrão de
+`src/trino_io.py` — ver nota do Docker isolado acima). `run_query` cacheado
+5min via `@st.cache_data`; converte colunas `DECIMAL` do driver Trino
+(`decimal.Decimal`) para `float`.
+
+### `streamlit/config.py` / `formatting.py` / `sql_filters.py` / `style.py`
+Constantes de conexão/paleta institucional (verde/amarelo do Governo do
+Ceará); formatação de valores (R$ bi/mi/mil) e classificação de risco,
+compartilhadas entre as abas; fragmentos SQL dos filtros globais; CSS
+custom — ver comentários no próprio `style.py` sobre por que os seletores
+precisam ser `div[data-testid="stSelectbox"] div[role="group"]` (React
+Aria, não BaseWeb) e por que o Streamlit está **pinado** (`==1.60.0`, não
+`>=`) em `requirements.txt`: um rebuild anterior puxou uma versão nova sem
+aviso e quebrou o CSS de contraste dos filtros silenciosamente.
+
+### `streamlit/ai_report.py`
+Mesmo padrão anti-alucinação de `models/narrative_report.py` (LLM só
+reescreve números já calculados, nunca infere) — duplicado aqui, não
+importado, pelo mesmo motivo do Docker isolado. `_valores_nao_verificados`
+confere todo valor em R$ do texto gerado contra o conjunto de valores
+realmente injetados no prompt.
+
+### `streamlit/pdf_export.py`
+Markdown → HTML → PDF via `markdown` + `xhtml2pdf`, 100% Python — escolhido
+especificamente para não precisar de `wkhtmltopdf`/Chromium (`apt-get`) no
+Dockerfile do painel.
+
+### `streamlit/tests/test_app_smoke.py`
+Teste de fumaça (`AppTest`) que carrega as 4 abas com `db.get_connection`
+mockado (não `db.run_query` — evita a armadilha de `from db import
+run_query` copiar uma referência antiga) e garante que nenhuma exceção
+Python é levantada. Não simula o clique em "Gerar relatório com IA" de
+propósito (chamada real à OpenAI). Roda no job `streamlit-smoke` do CI —
+motivado por uma regressão real (upgrade silencioso do Streamlit quebrando
+o CSS sem nenhum teste pegar).
+
+---
+
 ## `deploy/server-lakehouse/` — deploy e operação em produção
 
 ### `auto-sync.py`
@@ -351,9 +425,10 @@ manual para quando o volume já existe).
 
 ## `.github/` — CI/CD
 
-`workflows/ci.yml` (5 jobs de CI + 1 de deploy) e `.github/ci/*` (imagens e
-seed sintético usados só pelo job `dbt-integration`) — detalhado a fundo em
-`stacks/github-actions-cicd.md` (interno), não repetido aqui.
+`workflows/ci.yml` (6 jobs de CI + 1 de deploy — `lint`, `tests`,
+`streamlit-smoke`, `spark-tests`, `dbt`, `dbt-integration`) e `.github/ci/*`
+(imagens e seed sintético usados só pelo job `dbt-integration`) — detalhado
+a fundo em `stacks/github-actions-cicd.md` (interno), não repetido aqui.
 
 ---
 

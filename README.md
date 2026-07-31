@@ -118,13 +118,15 @@ push (ver seção "CI/CD" abaixo) — não só validados manualmente.
 ├── dbt/                          # Gold declarativa — staging -> dims -> fatos + testes (dbt-trino)
 ├── models/                       # Fase 3 (ML/IA) — Modelo 1 (anomaly_detection.py) e Modelo 2 (payment_forecast.py)
 ├── streamlit/                    # painel de negócio (Docker próprio) — consome iceberg.gold/ml via Trino
-│   └── tabs/                     #   Visão Geral, Previsão de Pagamentos, Anomalias em Contratos, Resumo (IA)
+│   │                             #   hospedado publicamente via Tailscale Funnel (sem VPN, diferente do resto)
+│   ├── tabs/                     #   Visão Geral, Previsão de Pagamentos, Anomalias em Contratos, Resumo (IA)
+│   └── tests/                    #   smoke test (AppTest, Trino mockado) — job streamlit-smoke no CI
 ├── docker/                       # Dockerfiles do stack (airflow, spark, hive, trino, superset)
 ├── deploy/server-lakehouse/      # overlay aditivo do lakehouse no servidor real do time
 │   │                             #   (auto-sync.py: deploy pull-based via cron + Checks API;
 │   │                             #   maintenance.sh: compaction/expiração/retenção do Iceberg;
 │   │                             #   collect_infra_metrics.py / collect_access_audit.py: schema audit)
-├── .github/workflows/ci.yml      # CI (5 jobs) + CD (deploy via SSH/Tailscale) — ver seção "CI/CD"
+├── .github/workflows/ci.yml      # CI (6 jobs) + CD (deploy via SSH/Tailscale) — ver seção "CI/CD"
 ├── documentacao/                 # documentação técnica de entrega (arquitetura, dicionário de dados)
 ├── slide-html/                   # apresentação HTML de entrega (storytelling do projeto)
 ├── notebooks/                    # exploração de ingestão + EDA Bronze/Silver/Gold + treino/avaliação ML
@@ -189,10 +191,11 @@ manuais pesados** (validado processando os 1,38M de empenhos do histórico compl
 
 [![CI/CD status](https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml/badge.svg)](https://github.com/jaimejrs/data-engineering-lab-PY03/actions/workflows/ci.yml)
 
-Todo push roda `.github/workflows/ci.yml` — **5 jobs de CI** em paralelo (lint/formatação
-via `ruff`, testes unitários, Spark local + Iceberg validando o `MERGE INTO`, `dbt parse`,
-e `dbt build` real contra um Trino + Iceberg + Hive Metastore efêmero em Docker, sem HDFS)
-— seguidos, só em push na `main` e só se os 5 passarem, de um **job de deploy (CD)**: entra
+Todo push roda `.github/workflows/ci.yml` — **6 jobs de CI** em paralelo (lint/formatação
+via `ruff`, testes unitários, smoke test do painel Streamlit (`AppTest`, Trino mockado),
+Spark local + Iceberg validando o `MERGE INTO`, `dbt parse`, e `dbt build` real contra um
+Trino + Iceberg + Hive Metastore efêmero em Docker, sem HDFS)
+— seguidos, só em push na `main` e só se os 6 passarem, de um **job de deploy (CD)**: entra
 na rede privada do servidor via Tailscale e aplica o código real por SSH (chave dedicada,
 restrita no servidor a rodar só o script de deploy). Existe também uma segunda camada de
 CD, mais simples e independente — `auto-sync.py` via cron no servidor, a cada 15min, que só
@@ -399,8 +402,8 @@ Validadas cruzando os contratos já extraídos contra o banco real.
 |---|---|---|---|
 | `cod_gestora` | `empenhos.codigoug` / `unidade_gestora.codigo` | ✅ 100% match | Join confiável. `unidade_gestora` é versionada por `ano` — juntar sempre por `(codigo, ano)`. |
 | `plain_cpf_cnpj_financiador` | `empenhos.codigocredor` | ⚠️ 96% match | Relação N:N (um credor pode ter vários contratos/empenhos) — não é join 1:1. |
-| `num_spu` | `empenhos.codprocesso` | ❌ ~7,5% match | Mesmo formato de processo administrativo, mas baixa cobertura na amostra. Usar só como enriquecimento best-effort. |
-| `num_contrato` / `plain_num_contrato` | `empenhos.codcontrato` | ❌ Sem correspondência | Domínios diferentes (provável código interno SIAFEM). Não usar sem achar um de-para real. |
+| `num_spu` | `empenhos.codprocesso` | ❌ ~7,5% match | Mesmo formato de processo administrativo, mas baixa cobertura na amostra. Usar só como enriquecimento best-effort. Causa raiz investigada a fundo em 31/07/2026 (migração de formato entre fontes independentes, não erro de modelagem) — ver a nota "Causa raiz do ~7-8% de match" em [`documentacao/dicionario-dados.md`](documentacao/dicionario-dados.md), seção `fato_contrato`. |
+| `num_contrato` / `plain_num_contrato` | `empenhos.codcontrato` | ❌ Sem correspondência | Domínios diferentes (provável código interno SIAFEM). Não usar sem achar um de-para real — confirmado (31/07/2026): também baixo preenchimento (35%) mesmo se houvesse de-para. |
 
 > A própria API de contratos já retorna `calculated_valor_empenhado` e `calculated_valor_pago` por contrato, junto de `valor_contrato`/`valor_atualizado_concedente` — útil para métricas de execução financeira (% pago, % empenhado, detecção de pagamento acima do valor) sem depender do join fraco com `empenhos`/`ordem_bancaria_orcamentaria`.
 

@@ -1,15 +1,5 @@
 """Job PySpark: Bronze (JSON raw, HDFS) -> Silver (tabelas Iceberg, HMS/HDFS).
 
-Substitui o caminho pandas (`src/transformers/silver_transformer.py`) no
-pipeline HDFS. Reusa as MESMAS regras de normalização/dedup/particionamento de
-`src/transformers/rules.py` (fonte única de verdade), agora como expressões de
-coluna do Spark.
-
-Ganho central vs. o caminho pandas: o dedup deixa de ser só "dentro de uma
-execução" — o `MERGE INTO` na tabela Iceberg deduplica **entre execuções** pela
-chave de negócio (`DEDUP_KEYS`), resolvendo a limitação documentada em
-`silver_transformer._dedup` e o `drop_duplicates` defensivo do `dw_loader`.
-
 Uso: spark-submit src/spark_jobs/silver_job.py --run-date YYYY-MM-DD
 """
 

@@ -161,11 +161,10 @@ MONETARY_FIELDS = {
 
 def type_columns(df, source: str):
     """Tipa data (DATE) e valores monetários (DECIMAL) usados pela Gold, em vez
-    de deixar isso pra `try_cast`/`substr` em runtime no dbt (achado da
-    análise crítica de 26/07/2026) — só os campos hoje consumidos por
-    `dbt/models/marts/*.sql`, não todo campo bruto da fonte. Roda depois de
-    `add_partitions` (que ainda precisa do campo de data como string, via
-    `F.substring`) e antes de `dedup_batch`/gravação.
+    de deixar isso pra `try_cast`/`substr` em runtime no dbt — só os campos
+    hoje consumidos por `dbt/models/marts/*.sql`. Roda depois de
+    `add_partitions` (que ainda precisa do campo de data como string) e
+    antes de `dedup_batch`/gravação.
     """
     date_field = PARTITION_DATE_FIELD[source]
     if date_field and date_field in df.columns:
@@ -180,15 +179,12 @@ def type_columns(df, source: str):
 def dedup_batch(df, source: str):
     """Dedup do lote pela chave de negócio, com desempate determinístico.
 
-    `dropDuplicates` sozinho (comportamento anterior) escolhe uma linha
-    arbitrária — não determinística, depende do plano físico/particionamento
-    interno do Spark — quando a MESMA `data_extracao` traz duas versões do
-    mesmo registro na mesma extração (raro; item 2 de
-    docs/06-analise-critica.md). Aqui o desempate usa um hash de todas as
-    colunas do registro como critério de ordenação: determinístico entre
-    execuções (dado o mesmo lote de entrada, sempre sobra a mesma linha), sem
-    inventar uma noção de "mais recente" que a fonte não fornece (não existe
-    `updated_at` por linha nas tabelas de origem).
+    `dropDuplicates` sozinho escolhe uma linha arbitrária — não
+    determinística, depende do plano físico do Spark — quando a mesma
+    `data_extracao` traz duas versões do mesmo registro. Aqui o desempate
+    usa um hash de todas as colunas como critério de ordenação:
+    determinístico entre execuções, sem inventar uma noção de "mais
+    recente" que a fonte não fornece (não existe `updated_at` por linha).
     """
     keys = list(DEDUP_KEYS[source])
     tie_break = F.md5(F.to_json(F.struct(*sorted(df.columns))))
@@ -200,11 +196,9 @@ def write_source(spark, source: str, df, run_date: str) -> None:
     """Cria a tabela Iceberg (1ª carga) ou faz MERGE upsert (cargas seguintes).
 
     `run_date` é a `data_extracao` do lote (não a data do evento) — gravada em
-    `_data_extracao` e usada como guarda no MERGE (ver abaixo) para impedir
-    que reprocessar uma `data_extracao` mais antiga, depois de uma mais nova
-    já ter atualizado o mesmo registro, sobrescreva o dado novo pelo velho
-    (item 2 de docs/06-analise-critica.md — o `MERGE INTO` antes era
-    incondicional, `WHEN MATCHED THEN UPDATE *` sem nenhuma comparação).
+    `_data_extracao` e usada como guarda no MERGE abaixo, para impedir que
+    reprocessar uma `data_extracao` mais antiga sobrescreva um registro já
+    atualizado por uma mais nova.
     """
     fqn = table_fqn(source)
     part_cols = PARTITION_COLS[source]

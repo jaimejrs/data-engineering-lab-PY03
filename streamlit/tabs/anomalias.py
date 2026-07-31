@@ -30,10 +30,7 @@ _COLUNAS_TABELA_CONTRATOS = (
 
 def _formatar_tabela_contratos(df: pd.DataFrame) -> pd.DataFrame:
     """Formata e renomeia as colunas de contrato pra exibição em tabela —
-    mesmo tratamento em R$ já usado nos st.metric (formatting.py), só que
-    também aplicado às tabelas (achado 2.3 da análise crítica de 30/07/2026:
-    antes as tabelas mostravam valor bruto e nome de coluna técnico, ex:
-    "valor_contrato": 1211176192)."""
+    mesmo tratamento em R$ já usado nos st.metric (formatting.py)."""
     return pd.DataFrame(
         {
             "Contrato": df["id_contrato_origem"],
@@ -293,11 +290,8 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
 
     st.divider()
 
-    # Todos os órgãos do período filtrado (não só quem tem contrato anômalo)
-    # — parte da query de total (df_contratos_por_orgao) e faz LEFT JOIN da
-    # contagem de anômalos, preenchendo 0 pra quem não tem nenhum. Sem o
-    # ".head(10)" anterior: o usuário quer ver o quadro completo dos órgãos
-    # do ano filtrado, não só um recorte.
+    # Todos os órgãos do período (não só quem tem contrato anômalo) — LEFT
+    # JOIN da contagem de anômalos sobre o total, 0 pra quem não tem nenhum.
     top_orgaos = df_contratos_por_orgao.merge(
         df_medio_alto.groupby("nome_orgao").size().reset_index(name="contratos_anomalos"),
         on="nome_orgao",
@@ -309,11 +303,9 @@ def render(anos_selecionados: list, orgaos_selecionados: list, score_threshold: 
         top_orgaos["contratos_anomalos"] / top_orgaos["total_contratos"] * 100,
         0.0,
     )
-    # Só órgãos com pelo menos 1 contrato atípico entram no gráfico — os
-    # demais (quase metade dos 99 num período típico) viram uma linha de
-    # resumo abaixo em vez de dezenas de barras vazias sem nenhum sinal
-    # (achado 2.4 da análise crítica de 30/07/2026). Nenhum órgão é omitido
-    # dos KPIs/tabelas acima, só deste gráfico específico.
+    # Só órgãos com pelo menos 1 contrato atípico entram no gráfico — o
+    # resto vira uma linha de resumo abaixo em vez de barras vazias. Nenhum
+    # órgão é omitido dos KPIs/tabelas acima, só deste gráfico.
     orgaos_com_anomalia = top_orgaos[top_orgaos["contratos_anomalos"] > 0].sort_values(
         "contratos_anomalos", ascending=False
     )

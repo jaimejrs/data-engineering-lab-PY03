@@ -1,34 +1,25 @@
 """Aba "Previsão de Pagamentos" — Modelo 2 (XGBoost quantílico).
 
 O modelo (`models/payment_forecast.py`) treina sobre `fato_ordem_bancaria`
-(pagamento efetivo ao credor, 3º estágio da despesa) — por isso o "real" desta
-aba compara com a MESMA fonte, não com `fato_contrato.valor_pago` (atributo do
-próprio contrato, que a nota "Sobre os dados" no topo do painel já avisa que
-só reconcilia com ordem bancária em ~7-8% dos casos). Comparar com a fonte
-errada foi o que produzia erro de modelo na casa de 100.000%+ numa versão
-anterior desta aba — não era o modelo que estava ruim, era a comparação.
+(pagamento efetivo, 3º estágio da despesa) — por isso o "real" desta aba
+compara com a MESMA fonte, não com `fato_contrato.valor_pago` (que
+reconcilia com ordem bancária em só ~7-8% dos casos, ver dicionário de
+dados).
 
-Segunda particularidade do Modelo 2: a previsão é por ÓRGÃO, e "próximo
-trimestre" é relativo ao último trimestre em que CADA órgão tem dado —
-não um corte único para o governo inteiro. Órgãos com atividade contínua
-até o trimestre mais recente caem todos no mesmo "próximo trimestre"
-(cobertura alta); órgãos com histórico mais antigo ou intermitente geram
-previsões para trimestres passados, cobrindo só a si mesmos (cobertura
-baixa). Por isso todo trimestre com previsão mostra sua cobertura (nº de
-órgãos previstos / universo de órgãos com ordem bancária) — sem isso, somar
-"previsto" de um trimestre de baixa cobertura contra o "real" do governo
-inteiro sub-representa o modelo por um fator de dezenas a centenas de vezes.
+A previsão é por ÓRGÃO: "próximo trimestre" é relativo ao último trimestre
+em que CADA órgão tem dado, não um corte único pro governo inteiro. Por
+isso todo trimestre com previsão mostra sua cobertura (nº de órgãos
+previstos / universo com ordem bancária) — sem isso, somar "previsto" de um
+trimestre de baixa cobertura contra o "real" do governo inteiro
+sub-representaria o modelo.
 
-Previsão retroativa (30/07/2026, pedido explícito): além da previsão real
-(pro próximo trimestre de cada órgão, alvo desconhecido), `models/payment_
-forecast.py` também grava previsão retroativa pros últimos trimestres que já
-fecharam (treinada só com dado anterior a cada um, sem vazamento — ver
-`forecast_quarters_backtest`). É isso que permite comparar "previsto vs.
-realizado" nesta aba mesmo pra trimestres que já têm dado real, sem esperar
-um novo fechar.
+`models/payment_forecast.py` também grava previsão retroativa pros últimos
+trimestres já fechados (`forecast_quarters_backtest`, treinada só com dado
+anterior a cada um), permitindo comparar previsto vs. realizado sem esperar
+um trimestre novo fechar.
 
-`render()` retorna (ano_ref, trimestre_detalhe) — a aba "Resumo (IA)"
-reaproveita essa mesma referência.
+`render()` retorna `(ano_ref, trimestre_detalhe)` — a aba "Resumo (IA)"
+reaproveita essa referência.
 """
 
 import pandas as pd
@@ -145,13 +136,11 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
     fig.update_layout(
         barmode="overlay",
         bargap=0.35,
-        # Sem título interno — duplicava o st.subheader logo acima (achado
-        # 5.2 da análise crítica de 30/07/2026); o ano de referência já
-        # aparece no próprio seletor "Ano de referência" abaixo.
+        # Sem título interno — duplicava o st.subheader acima.
         xaxis_title="Trimestre",
         yaxis_title="Valor (R$)",
-        # Legenda embaixo, não à direita — right-margin fixo ainda cortava o
-        # texto "Previsto (mediana, P10-P90)" (achado 5.3, revisão pós-deploy).
+        # Legenda embaixo, não à direita — margem direita fixa ainda cortava
+        # o texto "Previsto (mediana, P10-P90)".
         legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0, title="Origem"),
         margin=dict(b=70),
     )
@@ -265,9 +254,7 @@ def render(anos_disponiveis: list) -> tuple[int, int]:
 
     # Prioriza o trimestre "forward" (sem dado real ainda) — é o que importa
     # pro gestor planejar o próximo período. Cobertura só desempata entre
-    # candidatos forward; antes o critério era só "maior cobertura", que
-    # podia escolher um trimestre retroativo já fechado só por ter mais
-    # órgãos cobertos (achado 3.3 da análise crítica de 30/07/2026).
+    # candidatos forward.
     candidatos_forward = [t for t in trimestres_com_previsao if not real_map.get(t)]
     trimestre_padrao = max(candidatos_forward or trimestres_com_previsao, key=cobertura)
 

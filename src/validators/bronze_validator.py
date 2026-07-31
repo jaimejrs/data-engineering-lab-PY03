@@ -1,12 +1,9 @@
 """
 Validação da camada Bronze — schema e completude mínima dos arquivos ingeridos.
 
-Escopo (Fase 1, task validate_bronze): confere, para uma `data_extracao`, que
-cada fonte tem ao menos um arquivo gravado, que as colunas obrigatórias estão
-presentes em todos os registros e que a contagem mínima esperada foi atingida.
-
-Implementação inicial de apoio à DAG 1 (Membro 1) — a cargo do Membro 4
-(Benjamim) refinar regras de completude/qualidade adicionais.
+Confere, para uma `data_extracao`, que cada fonte tem ao menos um arquivo
+gravado, que as colunas obrigatórias estão presentes em todos os registros e
+que a contagem mínima esperada foi atingida.
 """
 
 import logging
@@ -18,13 +15,10 @@ from src.extractors.storage import find_data_extracao_dirs, list_json_files, rea
 
 logger = logging.getLogger(__name__)
 
-# Tamanho da amostra de registros checados por arquivo, por fonte, na validação
-# de schema/completude. `0` (padrão) preserva o comportamento original — checa
-# 100% dos registros. Para a carga cheia (~1,38M registros / 960 arquivos), isso
-# é O(tudo) numa task Python single-thread do Airflow (ver docs/06-analise-
-# -critica.md, item 7); setar via `BRONZE_VALIDATE_SAMPLE_SIZE` reduz o custo
-# de CPU da checagem sem deixar de contar o total exato de registros (a
-# contagem não depende de checar cada um, só de `len(records)`).
+# Tamanho da amostra de registros checados por arquivo, por fonte. `0`
+# (padrão) checa 100%. Setar via `BRONZE_VALIDATE_SAMPLE_SIZE` reduz o custo
+# de CPU numa task single-thread do Airflow sem afetar a contagem total
+# retornada (que não depende de checar cada registro, só de `len(records)`).
 RECORD_SAMPLE_SIZE = int(os.environ.get("BRONZE_VALIDATE_SAMPLE_SIZE", "0"))
 
 # Colunas mínimas exigidas por fonte para considerar o schema íntegro.
@@ -33,21 +27,16 @@ REQUIRED_COLUMNS = {
     "ordem_bancaria_orcamentaria": {"id", "ano", "dataemissao"},
     "unidade_gestora": {"codigo", "ano"},
     # num_contrato NÃO entra aqui: contratos por dispensa/inexigibilidade sem
-    # instrumento formal (ex: descricao_tipo="CONTRATO DE RATEIO" com
-    # descricao_url="...SEM.INSTRUMENTO.CONTRATUAL...") legitimamente vêm com
-    # num_contrato=null na API real — confirmado em produção em 24/07/2026. A
-    # identificação do registro é `id` (chave real usada a jusante); num_contrato
-    # é só um campo de referência, não uma chave.
+    # instrumento formal legitimamente vêm com num_contrato=null na API real.
+    # A identificação do registro é `id`; num_contrato é só referência.
     "contratos": {"id", "valor_contrato", "data_assinatura", "cod_gestora"},
 }
 
-# Mínimo de registros esperado por execução, usado quando o caller não passa
-# `min_records_by_source` explicitamente. Só faz sentido para `unidade_gestora`:
-# é a única fonte recarregada por inteiro a cada execução (~5.011 registros em
-# 19/07/2026), então uma queda brusca é sinal de falha real (conexão perdida,
-# tabela errada). As demais fontes são incrementais por watermark — o volume
-# diário varia livremente e pode ser legitimamente zero (ex: sem contrato
-# assinado num fim de semana), então um mínimo fixo geraria falso positivo.
+# Mínimo de registros esperado quando o caller não passa
+# `min_records_by_source`. Só faz sentido para `unidade_gestora`, a única
+# fonte recarregada por inteiro a cada execução — as demais são
+# incrementais por watermark, com volume diário legitimamente variável
+# (inclusive zero), então um mínimo fixo geraria falso positivo.
 DEFAULT_MIN_RECORDS_BY_SOURCE = {
     "unidade_gestora": 4000,
 }

@@ -14,13 +14,10 @@ with c as (
 contratos as (
     select * from c where rn = 1 and ano_calc is not null
 ),
--- SCD2 point-in-time (item 5 de docs/06-analise-critica.md): junta a versão de
--- dim_credor VIGENTE na data_assinatura do contrato, não a `versao_atual`.
--- Quando nenhuma versão cobre a data (comum pra contratos assinados antes do
--- snapshot dbt começar a acumular histórico — a 1ª carga registra só o estado
--- "hoje" de cada credor), cai pra versão mais antiga conhecida (menor
--- `valido_de`) em vez da atual — melhor aproximação histórica do que mostrar o
--- nome de hoje num contrato antigo.
+-- SCD2 point-in-time: junta a versão de dim_credor VIGENTE na data_assinatura
+-- do contrato, não a `versao_atual`. Quando nenhuma versão cobre a data
+-- (contrato assinado antes do snapshot dbt começar a acumular histórico),
+-- cai pra versão mais antiga conhecida em vez da atual.
 credor_pit as (
     select
         contratos.id as contrato_id,
@@ -44,9 +41,8 @@ select
     contratos.ano_calc as ano,
     cast(contratos.id as varchar) as id_contrato_origem,
     -- Chave p/ ligar (best-effort, ~7-8% de match real — não é FK obrigatória)
-    -- com `cod_contrato` de fato_empenho/fato_ordem_bancaria. Antes só existia
-    -- na Silver; não era propagada até aqui, então esse join não era possível
-    -- na Gold (achado da análise crítica de 26/07/2026).
+    -- com `cod_contrato` de fato_empenho/fato_ordem_bancaria — ver dicionário
+    -- de dados pra causa raiz do baixo match.
     contratos.num_spu,
     cp.sk_credor,
     dorg.sk_orgao,
@@ -56,9 +52,8 @@ select
     contratos.calculated_valor_pago as valor_pago,
     contratos.calculated_valor_empenhado as valor_empenhado,
     -- Explica boa parte (~49%) dos casos de valor_pago > valor_contrato —
-    -- aditivo contratual não refletido de volta no valor_contrato original.
-    -- Também não era propagada até aqui (achado da análise crítica de
-    -- 26/07/2026, ver assert_pagamento_dentro_do_contratado.sql).
+    -- aditivo contratual não refletido de volta no valor_contrato original
+    -- (ver assert_pagamento_dentro_do_contratado.sql).
     contratos.calculated_valor_aditivo as valor_aditivo,
     contratos.calculated_valor_ajuste as valor_ajuste,
     contratos.descricao_situacao as status,

@@ -31,15 +31,14 @@ from src.validators.bronze_validator import BronzeValidationError, validate_bron
 
 DEFAULT_WATERMARK = "2026-01-01"  # usado apenas na primeira execução, sem histórico prévio
 
-# Janela de reprocessamento (dias) subtraída do watermark na extração. O filtro
-# é sobre a data de EVENTO (dataemissao/data_assinatura); sem lookback, registros
-# que chegam atrasados na origem (lançamento retroativo) nunca seriam capturados.
-# O MERGE da Silver é idempotente, então reprocessar a sobreposição não duplica.
-# Ver docs/06.
+# Janela de reprocessamento (dias) subtraída do watermark na extração. O
+# filtro é sobre a data de EVENTO (dataemissao/data_assinatura); sem
+# lookback, lançamento retroativo na origem nunca seria capturado. O MERGE
+# da Silver é idempotente, então reprocessar a sobreposição não duplica.
 LOOKBACK_DAYS = int(os.environ.get("BRONZE_LOOKBACK_DAYS", "7"))
 
-# Fontes com watermark de evento próprio (item 1 de docs/06-analise-critica.md).
-# `unidade_gestora` fica de fora — não tem coluna de data, é sempre carga cheia.
+# Fontes com watermark de evento próprio — `unidade_gestora` fica de fora,
+# não tem coluna de data, é sempre carga cheia.
 EVENT_WATERMARK_SOURCES = ("empenhos", "ordem_bancaria_orcamentaria", "contratos")
 
 # As 2 tabelas do Postgres com data são extraídas numa ÚNICA chamada (mesma
@@ -55,26 +54,13 @@ def _event_watermark_variable(source: str) -> str:
 
 
 def _extract_start(source: str) -> str:
-    """Data inicial da extração de `source` = watermark de EVENTO da própria
+    """Data inicial da extração de `source` = watermark de evento da própria
     fonte (maior `dataemissao`/`data_assinatura` já vista nela) − LOOKBACK_DAYS.
 
-    Watermark por fonte (item 1 de docs/06-analise-critica.md): antes, uma
-    única Variable (`WATERMARK_VARIABLE`, gravada como a data de
-    PROCESSAMENTO `ds`) servia de base para o lookback das 2 fontes
-    (Postgres e API) ao mesmo tempo — se uma fonte atrasasse ou tivesse dado
-    mais antigo que a outra, não tinha como refletir isso. Agora cada fonte
-    tem sua própria Variable, avançada com o maior valor de
-    `dataemissao`/`data_assinatura` REALMENTE visto na execução (não a data
-    de hoje) — mais fiel ao evento, ainda que não seja `updated_at`/CDC de
-    verdade (as tabelas de origem não têm essa coluna, ver
-    `src/extractors/postgres_extractor.py`).
-
-    Fallback: na primeira execução após este deploy, a Variable por fonte
-    ainda não existe — cai pro watermark global antigo (`WATERMARK_VARIABLE`,
-    já avançado corretamente pelas execuções anteriores) em vez de
-    `DEFAULT_WATERMARK`, pra não disparar uma reextração gigante do início da
-    carga histórica. Da 2ª execução em diante, cada fonte já tem sua própria
-    Variable e o fallback deixa de ser usado.
+    Fallback pro watermark global antigo (`WATERMARK_VARIABLE`) enquanto a
+    Variable por fonte ainda não existe, em vez de `DEFAULT_WATERMARK` — evita
+    reextrair a carga histórica inteira na primeira execução após o deploy
+    desta lógica.
     """
     fallback = Variable.get(WATERMARK_VARIABLE, default_var=DEFAULT_WATERMARK)
     watermark = Variable.get(_event_watermark_variable(source), default_var=fallback)
@@ -125,10 +111,8 @@ def bronze_extract():
         except BronzeValidationError as exc:
             raise AirflowException(f"Validação da Bronze falhou para data_extracao={ds}: {exc}") from exc
 
-        # Reconciliação Bronze -> Silver (item 6 de docs/06-analise-critica.md):
-        # persiste a contagem que a validação acima já calculou, sem reler a
-        # Bronze de novo. Auxiliar/observabilidade — uma falha aqui (ex: Trino
-        # fora do ar) não pode derrubar a ingestão, que já passou na validação.
+        # Persiste a contagem que a validação já calculou, sem reler a
+        # Bronze. Observabilidade — falha aqui não pode derrubar a ingestão.
         log = logging.getLogger(__name__)
         try:
             record_bronze_counts(ds, {source: info["records"] for source, info in result.items()})
@@ -141,15 +125,12 @@ def bronze_extract():
     @task(outlets=[BRONZE_VALIDATED_DATASET])
     def advance_watermark(validation_result, postgres_result, api_result):
         ds = get_current_context()["ds"]
-        # Partição (`data_extracao`) que a DAG 2 (Silver) deve ler — continua
-        # sendo a data de PROCESSAMENTO, não a de evento (uso diferente do
-        # watermark de evento abaixo; ver RUN_DATE_TEMPLATE em dag_silver_transform.py).
+        # Partição (`data_extracao`) que a DAG 2 (Silver) deve ler — data de
+        # processamento, não de evento (watermark de evento é o loop abaixo).
         Variable.set(WATERMARK_VARIABLE, ds)
 
-        # Watermark de evento por fonte (item 1 de docs/06-analise-critica.md):
-        # avança com o maior dataemissao/data_assinatura REALMENTE visto nesta
-        # execução, não com `ds`. Fonte sem dado novo no período (max_date/
-        # max_data_assinatura None) não regride a própria watermark.
+        # Avança com o maior dataemissao/data_assinatura realmente visto
+        # nesta execução, não com `ds`. Fonte sem dado novo não regride.
         for table, max_date in (postgres_result.get("max_dates") or {}).items():
             if table in EVENT_WATERMARK_SOURCES and max_date:
                 Variable.set(_event_watermark_variable(table), max_date)

@@ -11,25 +11,19 @@ import streamlit as st
 
 CORTE_TOP5_APROVEITAMENTO = 100_000_000
 
-# Limiar (análise crítica de 30/07/2026, achado 2.1) pra detectar meses finais
-# com volume de registros muito abaixo do normal — sinal de que a fonte ainda
-# não tem o mês completo, não de queda real de execução (ver caption exibida
-# junto do corte). Mesmo valor de corte (50%) já usado em
-# tabs/previsao.py::COBERTURA_MINIMA_BACKTEST, por consistência.
+# Detecta meses finais com volume de registros muito abaixo do normal —
+# sinal de que a fonte ainda não tem o mês completo, não de queda real de
+# execução. Mesmo valor de tabs/previsao.py::COBERTURA_MINIMA_BACKTEST.
 LIMIAR_MES_INCOMPLETO = 0.5
 
 
 def _ultimo_periodo_completo(df: pd.DataFrame, coluna_contagem: str = "n_registros") -> tuple[int, int] | None:
     """Acha o último período (ano, mês) da série cuja contagem de registros
-    não esteja abaixo de `LIMIAR_MES_INCOMPLETO` da mediana — sinal de que a
-    fonte ainda não tem o mês completo, não de queda real de execução.
-    Calculado UMA VEZ sobre a série ESTADUAL (volume alto, heurística
-    confiável) e reaproveitado como o mesmo corte no drill-down por órgão:
-    um órgão de baixo volume não tem contagem própria suficiente pra essa
-    heurística funcionar isolada — usar o corte individual de cada órgão
-    deixava passar o mesmo mês incompleto sem sinalizar (corrigido após
-    verificação visual pós-deploy do achado 2.1, análise crítica de
-    30/07/2026). Retorna None se nenhum corte for necessário."""
+    não esteja abaixo de `LIMIAR_MES_INCOMPLETO` da mediana. Calculado sobre
+    a série estadual (volume alto, heurística confiável) e reaproveitado
+    como o mesmo corte no drill-down por órgão — um órgão de baixo volume
+    não tem contagem própria suficiente pra essa heurística funcionar
+    isolada. Retorna None se nenhum corte for necessário."""
     if len(df) <= 1:
         return None
     referencia = df[coluna_contagem].median()
@@ -61,10 +55,9 @@ def _truncar_ate(df: pd.DataFrame, corte: tuple[int, int] | None) -> tuple[pd.Da
 
 
 def _legenda_horizontal(fig) -> None:
-    """Legenda embaixo do gráfico, não à direita — right-margin fixo (ex:
-    margin=dict(r=120)) cortava o texto em colunas mais estreitas (drill-down
-    por órgão divide espaço com os cards ao lado) mesmo depois de ajustado
-    (achado 5.3, revisão pós-deploy: "Empenhado" ainda aparecia cortado)."""
+    """Legenda embaixo do gráfico, não à direita — margem direita fixa
+    cortava o texto em colunas mais estreitas (drill-down por órgão divide
+    espaço com os cards ao lado)."""
     fig.update_layout(
         legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0),
         margin=dict(b=90),
@@ -128,9 +121,8 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
         ORDER BY dt.ano, dt.mes
     """
     df_mensal = run_query(query_mensal)
-    # Corte único, calculado sobre a série estadual (ver docstring de
-    # _ultimo_periodo_completo) — reaproveitado depois no drill-down por
-    # órgão mais abaixo, em vez de recalculado por órgão.
+    # Reaproveitado no drill-down por órgão mais abaixo — ver docstring de
+    # _ultimo_periodo_completo.
     corte_periodo = _ultimo_periodo_completo(df_mensal) if not df_mensal.empty else None
 
     if df_mensal.empty:
@@ -215,10 +207,8 @@ def render(anos_selecionados: list, orgaos_selecionados: list) -> None:
     todos_orgaos = sorted(df_aproveitamento["nome_orgao"].tolist())
 
     # Filtro global de Órgão (sidebar) já ativo => só resta 1 opção possível
-    # aqui (a lista vem da mesma consulta já filtrada). Mostrar de novo um
-    # seletor "escolha o órgão" com uma única opção é redundante e confunde
-    # (achado 1.2 da análise crítica de 30/07/2026) — usa direto o órgão já
-    # escolhido na sidebar, sem campo extra.
+    # aqui (a lista vem da mesma consulta já filtrada) — usa direto o órgão
+    # já escolhido na sidebar, sem repetir um seletor com 1 opção só.
     if len(orgaos_selecionados) == 1 and todos_orgaos == [orgaos_selecionados[0]]:
         orgao_escolhido = orgaos_selecionados[0]
         st.subheader(orgao_escolhido)

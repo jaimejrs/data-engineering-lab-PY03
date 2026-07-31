@@ -14,16 +14,10 @@ from dotenv import load_dotenv
 
 import streamlit as st
 
-# Reaproveita o MESMO .env do projeto principal (mesmas variáveis já usadas em
-# toda a extração/ML: TRINO_HOST/PORT/USER/HTTP_SCHEME/CATALOG, OPENAI_API_KEY/
-# MODEL — ver .env.example na raiz do repo) em vez de exigir uma chave da
-# OpenAI duplicada só para este painel. `streamlit/.env` (se existir) é
-# carregado por cima e tem prioridade — útil para rodar/testar este painel
-# isolado, sem precisar do restante do projeto.
-#
-# Precisa rodar ANTES de importar config.py (lê as env vars no import) —
-# por isso os imports dos módulos do projeto vêm depois, não no topo do
-# arquivo (ver noqa: E402 abaixo).
+# Reaproveita o .env do projeto principal (mesmas variáveis de conexão/API já
+# usadas na extração/ML); `streamlit/.env`, se existir, sobrepõe. Precisa
+# rodar antes de importar config.py (lê as env vars no import), por isso os
+# imports dos módulos do projeto vêm depois (ver noqa: E402 abaixo).
 _ROOT_ENV = Path(__file__).resolve().parent.parent / ".env"
 _LOCAL_ENV = Path(__file__).resolve().parent / ".env"
 load_dotenv(_ROOT_ENV)
@@ -97,11 +91,9 @@ orgao_selecionado = st.sidebar.selectbox(
 )
 orgaos_selecionados = [] if orgao_selecionado == TODOS_ORGAOS else [orgao_selecionado]
 
-# Sensibilidade do score de anomalia: percentual fixo (não exposto como
-# filtro) — ver models/anomaly_detection.py: o score é reescalado min-max a
-# cada novo treino, então um percentual (sempre "os X% mais atípicos do lote
-# atual") é mais estável que um valor de corte absoluto, mas não precisa ser
-# ajustável pelo usuário do painel.
+# Percentual fixo, não exposto como filtro — o score é reescalado min-max a
+# cada treino (models/anomaly_detection.py), então um percentual ("top X% do
+# lote atual") é mais estável que um valor de corte absoluto.
 SCORE_PCT_TOP_PADRAO = 10
 df_score_cutoff = run_query(
     f"SELECT approx_percentile(score_anomalia, {1 - SCORE_PCT_TOP_PADRAO / 100}) AS cutoff "

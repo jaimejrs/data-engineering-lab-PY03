@@ -1,97 +1,40 @@
-"""Modelo 2 — previsão do volume de pagamentos por órgão para o próximo trimestre
-(XGBoost, regressão por quantil para o intervalo de confiança).
+"""Modelo 2 — previsão do volume de pagamentos por órgão para o próximo
+trimestre (XGBoost, regressão por quantil para o intervalo de confiança).
 
-Lê `iceberg.gold.fato_ordem_bancaria` — o pagamento efetivo ao credor (3º
-estágio da despesa: contrato → empenho → ordem bancária), criado em
-24/07/2026 (ver `docs/06-analise-critica.md`, item 3). Antes desse fato
-existir na Gold, este módulo usava `fato_empenho` (estágio de **compromisso**
-orçamentário, não o desembolso) como proxy — trocar foi só mudar a query de
-origem, o resto do pipeline de features não mudou.
+Lê `iceberg.gold.fato_ordem_bancaria` (pagamento efetivo ao credor, 3º
+estágio da despesa), não `fato_empenho` (compromisso orçamentário).
 
-Features (conforme docs/Trabalho Final.pdf, seção 4.3 — Modelo 2), adaptadas ao
-que existe na Gold:
-  - histórico trimestral de pagamentos -> `lag_1_trimestre` (trimestre anterior)
-    e `lag_4_trimestres` (mesmo trimestre do ano anterior), por órgão
-  - valor contratado ativo -> soma de `valor_contrato` com vigência sobrepondo o
-    trimestre (via `fato_contrato` + `iceberg.silver.contratos`)
-  - tipo de despesa -> `natureza` da ordem bancária (classificação orçamentária
-    padrão, ex: "3.3.90.18" — mais fiel ao pedido do enunciado do que a
-    modalidade de contratação usada quando o proxy era `fato_empenho`; one-hot
-    das mais frequentes)
-  - ano eleitoral -> `ano_alvo % 2 == 0` (simplificação: no Brasil todo ano par
-    tem eleição, municipal ou estadual/federal, alternando), onde `ano_alvo` é
-    o ano do trimestre PREVISTO (`target_proximo_trimestre`), não o ano da
-    linha atual — ver "BUG corrigido" abaixo.
+Features: `lag_1_trimestre`/`lag_4_trimestres` do valor pago por órgão,
+valor contratado com vigência ativa no trimestre, natureza da despesa
+dominante (one-hot) e flag de ano eleitoral — calculada sobre o ano do
+trimestre PREVISTO (`_next_quarter`), não o da linha atual, já que para
+trimestre=4 o alvo cai no ano seguinte.
 
-BUG corrigido (30/07/2026, auditoria de rigor científico de ML/DS):
-`flag_ano_eleitoral` era calculada sobre `panel["ano"]` (o ano da linha, isto
-é, do trimestre CONHECIDO usado como feature) em vez do ano do trimestre
-PREVISTO. Para toda linha de trimestre=4, o alvo é T1 do ano seguinte — um
-ano diferente, de paridade eleitoral potencialmente invertida. Ou seja, 25%
-das linhas (todas as transições Q4->Q1, que cruzam virada de ano) recebiam
-um viés sistemático nessa feature, não ruído aleatório: exatamente o tipo de
-erro que uma auditoria de rigor científico precisa pegar antes de confiar no
-modelo. Corrigido: a flag agora usa o ano de `_next_quarter(ano, trimestre)`.
+Agrupamento por `codigo_orgao`, nunca `sk_orgao`: `dim_orgao` é versionada
+por `(codigo, ano)`, então o mesmo órgão físico tem `sk_orgao` diferente a
+cada ano — agrupar por ele quebraria os lags e a vigência de contrato
+plurianual entre anos. `sk_orgao` só aparece nas queries para o JOIN com
+`dim_orgao`.
 
-BUG corrigido (25/07/2026, achado comparando com o script independente da
-Fernanda, dona da Fase 3/ML — ela chegou no mesmo problema por outro caminho,
-usando Prophet em vez de XGBoost, e documentou a correção no dela):
-`dim_orgao.sk_orgao = md5(codigo, ano)` — o MESMO órgão físico tem um
-`sk_orgao` diferente a cada ano. Agrupar a série temporal por `sk_orgao`
-(como este módulo fazia) reseta o grupo todo ano, então:
-  - `lag_4_trimestres` (mesmo trimestre do ano anterior) NUNCA tinha um valor
-    real — confirmado contra produção: 0 de 14.920 linhas com o campo
-    preenchido antes do fallback. Virava sempre uma cópia de `lag_1_trimestre`.
-  - `valor_contratado_ativo` só contava contratos assinados no MESMO ano do
-    trimestre sendo avaliado (porque a comparação também usava `sk_orgao`) —
-    89,5% das linhas saíam com o valor zerado, mesmo tendo contrato
-    plurianual vigente.
-Corrigido: todo agrupamento/junção por órgão agora usa `codigo_orgao` (estável
-no tempo), nunca `sk_orgao`. `sk_orgao` só aparece nas queries para fazer o
-JOIN com `dim_orgao`, não sai mais no resultado.
+`tune_hyperparameters()` roda validação cruzada walk-forward
+(`time_series_splits()`, cada fold treina só com trimestres estritamente
+anteriores ao validado) sobre um grid pequeno, otimizando pinball loss —
+métrica que penaliza sub/sobre-previsão por quantil, ao contrário do MAE
+(que só avalia a mediana). Usa `excluir_ultimo_trimestre=True`: o trimestre
+mais recente é reservado como holdout final de `evaluate()`, então não pode
+também influenciar a escolha de hiperparâmetros.
 
-Hiperparâmetros (revisão de 30/07/2026, docs/06-analise-critica.md):
-`n_estimators=200/max_depth=4/learning_rate=0.05` eram valores padrão
-razoáveis, mas nunca tinham passado por busca real — só um holdout único
-(último trimestre conhecido), que não valida hiperparâmetros de forma
-confiável em série temporal. `tune_hyperparameters()` roda validação cruzada
-walk-forward (`time_series_splits()`: cada fold valida um trimestre inteiro
-treinando só com trimestres estritamente anteriores, sem vazamento) sobre um
-grid pequeno, escolhendo pelo pinball loss médio (a métrica correta pra
-regressão por quantil — MAE só avalia a mediana, ignora se p10/p90 estão bem
-calibrados). Chamado a cada `run()`, antes do treino final; os resultados de
-cada combinação testada vão pro MLflow junto com a escolhida.
+`COBERTURA_MIN/MAX_ACEITAVEL` é um gate de qualidade: se a cobertura do
+intervalo [p10,p90] no holdout final fugir muito do nominal ~80%, `run()`
+loga ERROR e marca `alerta_qualidade` no MLflow — não bloqueia o pipeline
+(não há canal de alerta automatizado no projeto).
 
-BUG corrigido (30/07/2026, auditoria de rigor científico): a busca de
-hiperparâmetros usava os últimos `N_FOLDS_TUNING` trimestres como folds de
-validação — mas `evaluate()` (chamado logo depois, com os hiperparâmetros já
-escolhidos) usa esse MESMO último trimestre como "holdout final". Ou seja, o
-dado que deveria validar a escolha de forma independente já tinha influenciado
-essa escolha (via a média dos folds no tuning) — vazamento clássico de seleção
-de modelo, que infla a métrica reportada de um jeito difícil de quantificar.
-Corrigido: `time_series_splits(..., excluir_ultimo_trimestre=True)` no tuning
-remove o trimestre mais recente da grade ANTES de montar os folds, reservando-o
-só pra `evaluate()`. `tune_hyperparameters()` também loga a cobertura do
-intervalo por fold (não só o pinball loss usado pra escolher) — uma única
-cobertura "perto de 80%" num trimestre isolado (876 linhas, todas do mesmo
-período, não são 876 amostras independentes) não é evidência forte de boa
-calibração; ver a consistência entre vários folds é.
-
-Gate de qualidade (mesma auditoria): `COBERTURA_MIN/MAX_ACEITAVEL` — se o
-holdout final sair muito fora do nominal ~80%, `run()` loga ERROR + marca
-`alerta_qualidade` no MLflow (não bloqueia o pipeline, não há canal de
-alerta automatizado no projeto — mas fica visível pra quem for auditar).
-
-Previsão retroativa (30/07/2026, pedido explícito): além da previsão real
-(`forecast_next_quarter`, só pra órgãos cujo próximo trimestre ainda não tem
-dado), `forecast_quarters_backtest()` gera previsão pros últimos
-`N_BACKTEST_QUARTERS` trimestres que JÁ FECHARAM — treinando só com dado
-anterior a cada um (mesma lógica de `time_series_splits`, sem vazamento). As
-duas previsões são gravadas juntas em `FORECAST_TABLE`, marcadas por
-`is_backtest`; como cobrem órgãos mutuamente exclusivos (alvo desconhecido
-vs. já conhecido), somam cobertura sem se sobrepor. É isso que permite o
-painel (`streamlit/tabs/previsao.py`) mostrar "previsto vs. realizado" pra
-trimestres já fechados, sem esperar um novo fechar.
+`forecast_quarters_backtest()` gera previsão retroativa para os últimos
+`N_BACKTEST_QUARTERS` trimestres já fechados, treinando cada um só com dado
+anterior a ele — permite comparar previsto vs. realizado sem esperar um
+trimestre novo fechar. Gravada junto com a previsão real (`FORECAST_TABLE`),
+marcada por `is_backtest`; os dois conjuntos nunca se sobrepõem (um exige
+alvo desconhecido, o outro exige alvo conhecido).
 
 Uso: python -m models.payment_forecast
 """
@@ -115,7 +58,7 @@ ARTIFACT_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), "artifacts", "xgboost_previsao_pagamentos.joblib"),
 )
 
-# Schema `ml` (não `gold` — separado do modelo dimensional desde 26/07/2026).
+# Schema `ml`, não `gold` — saída de modelo, não modelo dimensional.
 FORECAST_TABLE = "iceberg.ml.previsao_pagamento_orgao"
 MODEL_VERSION = "xgboost_quantile_v3_tuned"
 MLFLOW_EXPERIMENT = "payment_forecast"
@@ -125,9 +68,8 @@ QUANTILES = (0.1, 0.5, 0.9)  # intervalo de confiança ~80% + mediana
 
 DEFAULT_HYPERPARAMS = {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05}
 
-# Grid pequeno de propósito — o painel roda a cada novo `dbt build` da Gold
-# (ver dags/dag_ml_inference.py), então a busca precisa ser rápida. Inclui o
-# ponto DEFAULT_HYPERPARAMS (linha 4) como referência de comparação.
+# Grid pequeno — roda a cada dbt build da Gold, precisa ser rápido. Inclui
+# DEFAULT_HYPERPARAMS como um dos candidatos.
 HYPERPARAM_GRID: list[dict] = [
     {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.1},
     {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.05},
@@ -141,21 +83,14 @@ HYPERPARAM_GRID: list[dict] = [
 N_FOLDS_TUNING = 4
 
 # Faixa aceitável de cobertura do intervalo [p10,p90] (nominal ~80%) no
-# holdout final — fora disso, os quantis provavelmente estão mal calibrados
-# neste treino específico (gate de qualidade, auditoria de 30/07/2026). Sem
-# canal de alerta automatizado (Slack/e-mail) nesse projeto, então isso não
-# bloqueia o pipeline — só loga em nível ERROR + marca uma tag no MLflow,
-# visível pra quem for auditar antes de confiar na previsão.
+# holdout final — fora disso, os quantis provavelmente estão mal calibrados.
+# Sem canal de alerta automatizado no projeto: só loga ERROR + tag no MLflow.
 COBERTURA_MIN_ACEITAVEL = 0.5
 COBERTURA_MAX_ACEITAVEL = 0.98
 
-# Quantos trimestres já fechados (com dado real conhecido) recebem previsão
-# RETROATIVA gravada junto com a previsão real de verdade — dá pra comparar
-# "o que o modelo teria previsto" com o que aconteceu, sem esperar um novo
-# trimestre fechar (pedido explícito, 30/07/2026). Sempre os últimos
-# `N_BACKTEST_QUARTERS` com alvo conhecido — hoje (dado até 2026-T2) são
-# 2026-T1 e 2026-T2; avança sozinho conforme a Gold recebe trimestres novos,
-# não é uma data fixa no código. Ver `forecast_quarters_backtest`.
+# Nº de trimestres já fechados que recebem previsão retroativa junto com a
+# previsão real — sempre os últimos com alvo conhecido, avança sozinho
+# conforme a Gold recebe trimestres novos. Ver `forecast_quarters_backtest`.
 N_BACKTEST_QUARTERS = 2
 
 PAGAMENTO_QUERY = """
@@ -172,11 +107,7 @@ JOIN iceberg.gold.dim_orgao o ON f.sk_orgao = o.sk_orgao
 WHERE f.valor IS NOT NULL AND f.sk_orgao IS NOT NULL AND NOT f.flag_cancelada
 """
 
-# `codigo_orgao` (não `sk_orgao`) — sk_orgao do contrato reflete o ANO EM QUE
-# ELE FOI ASSINADO (dim_orgao é versionada por (codigo, ano)); um contrato
-# plurianual assinado em 2023 e ainda vigente em 2026 tem sk_orgao "de 2023",
-# que nunca bateria com o sk_orgao "de 2026" do trimestre sendo avaliado. Ver
-# nota de correção do bug no topo do módulo.
+# codigo_orgao, não sk_orgao — ver docstring do módulo.
 CONTRATOS_VIGENCIA_QUERY = """
 SELECT
     o.codigo AS codigo_orgao,
@@ -245,11 +176,8 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     """Monta o painel órgão × trimestre com o alvo (valor do trimestre) e as
     features de previsão para o **próximo** trimestre.
     """
-    # `valor`/`valor_contrato` vêm do Trino como decimal(15,2) -> o driver
-    # devolve `decimal.Decimal` (dtype "object" no pandas), que o XGBoost
-    # rejeita ("DataFrame.dtypes for data must be int, float, bool or
-    # category"). Só apareceu rodando contra o Trino real — os testes usam
-    # DataFrame sintético já em float.
+    # Trino devolve decimal(15,2) como decimal.Decimal (dtype "object"), que o
+    # XGBoost rejeita — converte pra float.
     pagamentos = pagamentos.assign(valor=pd.to_numeric(pagamentos["valor"], errors="coerce"))
     contratos = contratos.assign(valor_contrato=pd.to_numeric(contratos["valor_contrato"], errors="coerce"))
 
@@ -268,16 +196,12 @@ def build_quarterly_panel(pagamentos: pd.DataFrame, contratos: pd.DataFrame) -> 
     )
     panel = base.merge(modalidade_dominante, on=["codigo_orgao", "ano", "trimestre"], how="left")
 
-    # Agrupar por `codigo_orgao` (não `sk_orgao`, que muda a cada ano) é o que
-    # faz os lags abaixo enxergarem o histórico plurianual do órgão — ver nota
-    # de correção do bug no topo do módulo.
     panel = panel.sort_values(["codigo_orgao", "ano", "trimestre"]).reset_index(drop=True)
     panel["valor_contratado_ativo"] = _valor_contratado_ativo_por_org(
         contratos, panel[["codigo_orgao", "ano", "trimestre"]]
     )
-    # Ano do trimestre PREVISTO, não da linha atual (ver "BUG corrigido" no
-    # topo do módulo) — equivalente vetorizado de aplicar `_next_quarter` linha
-    # a linha: só trimestre=4 empurra o ano-alvo pro ano seguinte.
+    # Ano do trimestre previsto, não da linha atual — equivalente vetorizado
+    # de _next_quarter: só trimestre=4 empurra o ano-alvo pro ano seguinte.
     ano_alvo = panel["ano"] + (panel["trimestre"] == 4).astype(int)
     panel["flag_ano_eleitoral"] = (ano_alvo % 2 == 0).astype(int)
 
@@ -338,9 +262,8 @@ def predict_quantiles(models: dict[float, XGBRegressor], X: pd.DataFrame) -> pd.
     # em algum ponto — comum em regressão por quantil treinada independentemente.
     cols = sorted(out.columns, key=lambda c: int(c[1:]))
     out[cols] = out[cols].cummax(axis=1)
-    # Valor previsto de pagamento não pode ser negativo — para órgão/trimestre
-    # com histórico baixo/perto de zero, a regressão por quantil pode
-    # extrapolar abaixo de zero (achado da análise crítica de 26/07/2026).
+    # Valor previsto não pode ser negativo — regressão por quantil pode
+    # extrapolar abaixo de zero para órgãos com histórico perto de zero.
     out[cols] = out[cols].clip(lower=0)
     return out
 
@@ -394,19 +317,13 @@ def _cobertura_intervalo(y_true: pd.Series, preds: pd.DataFrame) -> float:
 def time_series_splits(
     panel: pd.DataFrame, X: pd.DataFrame, n_folds: int = N_FOLDS_TUNING, excluir_ultimo_trimestre: bool = False
 ) -> list[tuple]:
-    """Validação cruzada walk-forward: cada fold valida UM trimestre inteiro
-    (todas as linhas daquele ano/trimestre com alvo conhecido), treinando só
-    com linhas de trimestres estritamente anteriores — sem vazamento
-    temporal (nenhum fold treina com dado "do futuro" em relação ao que
-    valida). Os últimos `n_folds` trimestres com alvo conhecido viram os
-    folds de validação; o resto de cada um vira o treino daquele fold.
+    """Validação cruzada walk-forward: cada fold valida um trimestre inteiro,
+    treinando só com trimestres estritamente anteriores (sem vazamento). Os
+    últimos `n_folds` trimestres com alvo conhecido viram os folds.
 
-    `excluir_ultimo_trimestre=True` (usado por `tune_hyperparameters`, ver
-    docstring lá) remove o trimestre mais recente ANTES de montar os folds —
-    corrige um vazamento real (auditoria de 30/07/2026): sem isso, o mesmo
-    trimestre que vira "holdout final" em `evaluate()` também entrava como
-    um dos folds de seleção de hiperparâmetros, inflando artificialmente a
-    métrica reportada como se fosse validação independente."""
+    `excluir_ultimo_trimestre=True` remove o trimestre mais recente antes de
+    montar os folds — usado por `tune_hyperparameters` para não deixar o
+    holdout final de `evaluate()` também entrar na seleção de hiperparâmetros."""
     y = panel.loc[X.index, "target_proximo_trimestre"]
     known_mask = y.notna()
 
@@ -439,21 +356,14 @@ def tune_hyperparameters(
     quantiles: tuple[float, ...] = QUANTILES,
 ) -> tuple[dict, list[dict]]:
     """Busca de hiperparâmetros com validação cruzada temporal (ver
-    `time_series_splits`) — escolhe pelo pinball loss médio (folds × quantis).
-    Retorna os hiperparâmetros vencedores e o log de todas as tentativas
-    (pra registrar no MLflow, permitindo auditar a escolha depois).
+    `time_series_splits`), escolhendo pelo pinball loss médio (folds ×
+    quantis). Retorna os hiperparâmetros vencedores e o log de todas as
+    tentativas, para registrar no MLflow.
 
-    Usa `excluir_ultimo_trimestre=True`: o trimestre mais recente com alvo
-    conhecido NUNCA entra como fold de tuning, porque `run()` reserva
-    exatamente esse trimestre pra `evaluate()` reportar como holdout "final".
-    Sem essa exclusão, o mesmo dado influenciaria a escolha de hiperparâmetros
-    E a métrica que supostamente valida essa escolha de forma independente —
-    vazamento que inflava artificialmente a cobertura reportada (achado da
-    auditoria de rigor científico de 30/07/2026).
-
-    Também registra, por fold, a cobertura do intervalo [p10,p90] (não só o
-    pinball loss) — permite checar se a calibração ~80% se sustenta em vários
-    períodos históricos, não só no trimestre único que `evaluate()` reporta."""
+    Usa `excluir_ultimo_trimestre=True` — ver `evaluate()`/`run()`. Também
+    registra a cobertura do intervalo por fold (não só o pinball loss), para
+    checar se a calibração ~80% se sustenta em vários períodos, não só no
+    holdout único de `evaluate()`."""
     folds = time_series_splits(panel, X, n_folds=n_folds, excluir_ultimo_trimestre=True)
     if not folds:
         logger.warning("Sem folds de validação temporal suficientes — mantendo hiperparâmetros padrão")
@@ -516,21 +426,11 @@ def forecast_quarters_backtest(
     n_quarters: int = N_BACKTEST_QUARTERS,
     quantiles: tuple[float, ...] = QUANTILES,
 ) -> pd.DataFrame:
-    """Previsão RETROATIVA (backtest) pros `n_quarters` trimestres mais
-    recentes que JÁ têm alvo real conhecido (pedido explícito: comparar
-    previsto vs. realizado sem esperar um trimestre novo fechar). Reusa
-    `time_series_splits` (sem excluir_ultimo_trimestre — aqui é justamente o
-    trimestre mais recente que interessa) pra treinar cada previsão só com
-    dado estritamente anterior ao trimestre-alvo, sem vazamento: não é o
-    modelo final "espiando" quem ganhou de olho no futuro, é o que o modelo
-    teria previsto se rodasse naquela época, com os hiperparâmetros já
-    escolhidos por `tune_hyperparameters`.
-
-    Mesmo formato de `forecast_next_quarter`, com uma diferença: aqui
-    `ano_previsto`/`trimestre_previsto` JÁ têm valor real disponível (é assim
-    que dá pra comparar) — o de baixo é o único caminho pra órgãos cujo
-    alvo é DESCONHECIDO. As duas previsões nunca se sobrepõem no mesmo
-    órgão/trimestre (uma exige alvo nulo, a outra exige alvo conhecido)."""
+    """Previsão retroativa para os `n_quarters` trimestres mais recentes com
+    alvo já conhecido — cada um treinado só com dado estritamente anterior a
+    ele (sem vazamento), com os hiperparâmetros já escolhidos por
+    `tune_hyperparameters`. Mesmo formato de `forecast_next_quarter`, mas sem
+    sobreposição: aqui o alvo é conhecido, lá é desconhecido."""
     folds = time_series_splits(panel, X, n_folds=n_quarters)
     resultados = []
     for train_idx, valid_idx in folds:
@@ -607,11 +507,8 @@ def write_forecasts(resultado: pd.DataFrame, model_version: str = MODEL_VERSION)
             scored_at timestamp
         )
     """
-    # `is_backtest` (30/07/2026) é coluna nova — `CREATE TABLE IF NOT EXISTS`
-    # dentro de `replace_table` só cobre ambiente do zero; ambiente com a
-    # tabela já criada antes desta mudança precisa do ADD COLUMN explícito
-    # (idempotente) antes do replace_table (mesmo padrão de `write_scores`
-    # em models/anomaly_detection.py, pra `flag_anomalia`).
+    # ADD COLUMN idempotente para ambientes onde a tabela já existia sem
+    # `is_backtest` — `CREATE TABLE IF NOT EXISTS` só cobre ambiente do zero.
     trino_io.execute(f"ALTER TABLE IF EXISTS {FORECAST_TABLE} ADD COLUMN IF NOT EXISTS is_backtest boolean")
 
     trino_io.replace_table(
@@ -640,18 +537,14 @@ def run(persist: bool = True) -> pd.DataFrame:
         X = build_feature_matrix(panel)
         y = panel.loc[X.index, "target_proximo_trimestre"]
 
-        # Busca de hiperparâmetros com validação cruzada temporal (ver
-        # "Hiperparâmetros" no topo do módulo) — roda ANTES do log_params
-        # principal pra logar os hiperparâmetros vencedores, não os fixos.
+        # Roda antes do log_params abaixo para logar os hiperparâmetros
+        # vencedores, não os fixos.
         melhor_params, trials = tune_hyperparameters(panel, X, y)
         for i, trial in enumerate(trials):
             mlflow.log_metric(f"tuning_trial_{i}_pinball_loss", trial["pinball_loss_medio"])
 
-        # Cobertura por fold da combinação VENCEDORA — valida calibração em
-        # vários trimestres históricos, não só no holdout único de `evaluate()`
-        # abaixo (achado da auditoria de 30/07/2026: uma única cobertura
-        # "perto de 80%" pode ser coincidência de um trimestre específico;
-        # olhar a consistência entre folds é evidência mais forte).
+        # Cobertura por fold da combinação vencedora — valida calibração em
+        # vários trimestres, não só no holdout único de evaluate() abaixo.
         melhor_trial = min(trials, key=lambda t: t["pinball_loss_medio"]) if trials else {}
         coberturas_por_fold = melhor_trial.get("coberturas_por_fold", [])
         for i, cobertura_fold in enumerate(coberturas_por_fold):
@@ -671,10 +564,9 @@ def run(persist: bool = True) -> pd.DataFrame:
         )
         mlflow.set_tag("model_version", MODEL_VERSION)
 
-        # Guarda de regressão para o bug do sk_orgao-por-ano (ver topo do
-        # módulo): se `lag_4_trimestres` real (não o fallback) cair a ~0 de
-        # novo, algum código voltou a agrupar por uma chave que reseta a cada
-        # ano. Logado sempre, não só quando falha, pra dar pra comparar a
+        # Guarda de regressão: se lag_4_trimestres real (não o fallback) cair
+        # a zero, o agrupamento por órgão voltou a usar uma chave que reseta
+        # todo ano (ver docstring do módulo). Logado sempre, para comparar a
         # tendência entre runs no MLflow.
         pct_lag4_real = float(panel.loc[X.index, "lag_4_trimestres"].notna().mean()) if len(X) else 0.0
         mlflow.log_metric("pct_lag_4_trimestres_com_dado_real", pct_lag4_real)
@@ -684,9 +576,8 @@ def run(persist: bool = True) -> pd.DataFrame:
                 "suspeita de regressão do bug de agrupamento por sk_orgao versionado por ano."
             )
 
-        # holdout = último trimestre com alvo conhecido, já com os hiperparâmetros vencedores
-        # (reservado do tuning acima via excluir_ultimo_trimestre=True — nunca
-        # usado pra escolher hiperparâmetros, então é validação de verdade)
+        # Holdout = trimestre reservado por excluir_ultimo_trimestre=True no
+        # tuning acima — nunca usado pra escolher hiperparâmetros.
         metrics = evaluate(panel, X, hyperparams=melhor_params)
         if metrics:
             mlflow.log_metrics(metrics)
@@ -709,11 +600,6 @@ def run(persist: bool = True) -> pd.DataFrame:
         resultado = forecast_next_quarter(panel, X, models)
         resultado["is_backtest"] = False
 
-        # Previsão retroativa (backtest) pros últimos N_BACKTEST_QUARTERS
-        # trimestres já fechados — treina só com hiperparâmetros vencedores +
-        # dado anterior a cada trimestre-alvo (ver docstring da função), pra
-        # dar pra comparar previsto vs. realizado sem esperar um novo
-        # trimestre fechar (pedido explícito, 30/07/2026).
         resultado_backtest = forecast_quarters_backtest(panel, X, y, melhor_params)
         resultado_backtest["is_backtest"] = True
 

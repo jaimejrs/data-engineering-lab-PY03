@@ -2,74 +2,36 @@
 
 Aprende o comportamento "normal" de um contrato (valor, modalidade, tipo de
 objeto, duração, emergência, histórico de infração do credor) e atribui um
-score de anomalia em [0, 1] — quanto mais alto, mais atípico. Não supervisionado
-por decisão de projeto (não existe rótulo de "contrato irregular" em nenhuma das
-fontes — ver docs/Trabalho Final.pdf, seção 7.3: "avalie o modelo com analistas,
-pois não há rótulos ground-truth").
+score de anomalia em [0, 1] — quanto mais alto, mais atípico. Não
+supervisionado: não existe rótulo de "contrato irregular" em nenhuma fonte.
 
-Features (conforme docs/Trabalho Final.pdf, seção 4.3 — Modelo 1):
-  - valor_contrato
-  - modalidade (one-hot)
-  - tipo_objeto (one-hot; categorias raras agrupadas em "OUTROS")
-  - dias_vigencia (data_termino - data_inicio)
-  - flag_emergency
-  - historico_credor_infringement
+Features: `valor_contrato`, `modalidade` (one-hot), `tipo_objeto` (one-hot,
+categorias raras agrupadas em "OUTROS"), `dias_vigencia`, `flag_emergency`,
+`historico_credor_infringement`. Lê `fato_contrato` + dimensões na Gold e
+`silver.contratos` para `tipo_objeto`/vigência, ainda não modelados na Gold.
 
-Lê a Gold (`iceberg.gold.fato_contrato` + dimensões) e a Silver
-(`iceberg.silver.contratos`, só para `tipo_objeto`/vigência, que ainda não estão
-modelados na Gold) via Trino — mesmo padrão de conexão dos notebooks de EDA.
+Sem rótulo, não há classe pra rebalancear no treino (SMOTE/ajuste de peso
+são técnicas supervisionadas) — o equivalente aqui é calibrar o ponto de
+corte em produção a partir da distribuição real do score, não do treino:
+`summarize_score_distribution()` expõe percentis e contagem acima de
+thresholds usuais (0.7/0.8/0.9/0.95), logados no MLflow a cada run, para
+quem operacionaliza escolher um limiar compatível com a capacidade real de
+revisão manual.
 
-Desbalanceamento (tarefa 28, docs/Trabalho Final.pdf seção 7.3: "Trate o
-desbalanceamento [...] Use SMOTE ou ajuste de pesos caso converta para
-classificação supervisionada"): SMOTE/ajuste de peso por classe são técnicas
-de aprendizado SUPERVISIONADO — pressupõem rótulo (0/1) pra saber o que é
-minoria. Este modelo é deliberadamente não supervisionado (sem rótulo de
-"contrato irregular" em nenhuma fonte), então não há classe pra rebalancear
-no treino. O equivalente correto aqui é outro: calibrar o PONTO DE CORTE em
-produção a partir da distribuição real do score, não do treino —
-`summarize_score_distribution()` expõe percentis e contagem de contratos
-acima de thresholds usuais (0.7/0.8/0.9/0.95), logados no MLflow a cada run,
-pra quem for operacionalizar (Fernanda/analistas) escolher um limiar
-compatível com a capacidade real de revisão manual, em vez de um corte
-arbitrário embutido no código.
+`contamination` não afeta o score contínuo — só desloca `decision_function`
+por uma constante que o `MinMaxScaler` normaliza de volta (correlação de
+Spearman = 1.0 entre valores testados). Mantido em `"auto"`.
+`n_estimators=400` (não o default 100): testado sobre produção medindo a
+interseção do "top 1% mais atípico" entre re-treinos com seeds diferentes —
+200 árvores reproduzem 87,6% da lista entre execuções, 400 sobe pra 92,6%
+(retornos decrescentes daí em diante).
 
-Hiperparâmetros (revisão de 30/07/2026, docs/06-analise-critica.md):
-  - `contamination`: só afeta `flag_anomalia` (o corte binário do `predict()`
-    do próprio Isolation Forest) — verificado experimentalmente que variar
-    contamination desloca `decision_function()` por uma CONSTANTE (`offset_`),
-    sem mudar o ranking relativo dos contratos (correlação de Spearman = 1.0
-    entre contamination=0.01/0.05/0.1/'auto' num teste controlado). Como
-    `score_anomalia()` normaliza com MinMaxScaler logo em seguida, esse
-    deslocamento constante desaparece — `contamination` não tem NENHUM efeito
-    sobre o score contínuo que o painel usa para priorizar revisão. Não há
-    o que "otimizar" aqui sem rótulo; manter 'auto' (default do scikit-learn)
-    é o correto.
-  - `n_estimators`: este SIM afeta o score contínuo — mais árvores reduz a
-    variância da estimativa. Testado sobre os ~216 mil contratos reais de
-    produção, re-treinando com seeds diferentes e medindo a interseção do
-    "top 1% mais atípico" entre execuções (a métrica que importa: quem entra
-    na lista de revisão prioritária não pode depender de sorte do random_state):
-    100 árvores → 80,8% de interseção; 200 (valor anterior) → 87,6%; 400 →
-    92,6%; 600 → 94,3% (retornos decrescentes a partir daqui). Subido para
-    400 — dobra o custo de treino em troca de uma redução real na variância
-    de quem aparece como prioridade de revisão.
-
-Gate de qualidade em produção (auditoria de rigor científico, 30/07/2026):
-sem rótulo não dá pra medir acurácia, mas dá pra detectar sinais de que algo
-quebrou no pipeline:
-  - Distribuição degenerada: se `score_p50 == score_p99`, o modelo não está
-    discriminando NENHUM contrato neste treino (ex: feature matrix quebrada,
-    todas as linhas idênticas) — sinal de que o score inteiro da execução não
-    é confiável.
-  - Deriva vs. execução anterior: `score_medio` costuma variar pouco entre
-    re-treinos sobre dados parecidos (~0,165-0,168 nas últimas execuções
-    reais). Uma mudança grande demais (`DRIFT_SCORE_MEDIO_MAX_ACEITAVEL`)
-    sinaliza possível regressão a montante (bug de feature, mudança não
-    intencional nos dados de entrada) — consultado ANTES de sobrescrever
-    `SCORE_TABLE`, comparado contra a média que estava valendo em produção.
-Nenhum dos dois bloqueia o pipeline (sem canal de alerta automatizado nesse
-projeto) — só logam ERROR + marcam uma tag no MLflow, visível pra quem for
-auditar antes de confiar no score desta execução.
+Sem rótulo não dá pra medir acurácia, mas dá pra pegar sinal de que algo
+quebrou: `score_p50 == score_p99` indica distribuição degenerada (o modelo
+não está discriminando nada neste treino); deriva grande no `score_medio`
+vs. a execução anterior (`DRIFT_SCORE_MEDIO_MAX_ACEITAVEL`) sugere
+regressão a montante. Nenhum dos dois bloqueia o pipeline (sem canal de
+alerta automatizado no projeto) — só logam ERROR + marcam tag no MLflow.
 
 Uso: python -m models.anomaly_detection [--contamination auto]
 """
@@ -101,21 +63,13 @@ ARTIFACT_PATH = os.environ.get(
 
 MLFLOW_EXPERIMENT = "anomaly_detection"
 
-# Tabela própria do score, schema `ml` (não `gold` — separado do modelo
-# dimensional desde 26/07/2026) — não é gravada em `fato_contrato`
-# diretamente: `fato_contrato` é `materialized='table'` no dbt (recriada do
-# zero a cada `dbt build`), então um UPDATE nela seria apagado no build
-# seguinte. `fato_contrato.sql` faz LEFT JOIN nesta tabela (ver
-# dbt/models/sources.yml, source `ml_scores`), então o score aparece
-# automaticamente no próximo build.
+# `fato_contrato` é `materialized='table'` no dbt (recriada do zero a cada
+# build), então o score não pode ser gravado nela via UPDATE — fica numa
+# tabela própria e `fato_contrato.sql` faz LEFT JOIN nela a cada build.
 SCORE_TABLE = "iceberg.ml.score_anomalia_contrato"
 MODEL_VERSION = "isolation_forest_v2_400trees"
 
-# 400, não 200 — ver "Hiperparâmetros" no topo do módulo: evidência real
-# (~216 mil contratos de produção) de que 200 árvores só reproduzem 87,6% do
-# "top 1% mais atípico" entre execuções com seeds diferentes; 400 sobe pra
-# 92,6%, um ganho real de estabilidade pra quem prioriza revisão manual.
-N_ESTIMATORS = 400
+N_ESTIMATORS = 400  # ver docstring do módulo
 
 # Categorias mais frequentes de tipo_objeto mantidas isoladas; o resto vira "OUTROS"
 # (evita one-hot explodir com centenas de descrições de objeto quase únicas).
@@ -282,10 +236,8 @@ def write_scores(resultado: pd.DataFrame, model_version: str = MODEL_VERSION) ->
             scored_at timestamp
         )
     """
-    # `flag_anomalia` (tarefa 25/07, incorporado do script da Fernanda) é
-    # coluna nova — CREATE TABLE IF NOT EXISTS acima só cobre ambiente do
-    # zero; ambiente com a tabela já criada antes desta mudança precisa do
-    # ADD COLUMN explícito (idempotente) antes do replace_table.
+    # ADD COLUMN idempotente para ambientes onde a tabela já existia sem
+    # `flag_anomalia` — CREATE TABLE IF NOT EXISTS só cobre ambiente do zero.
     trino_io.execute(f"ALTER TABLE IF EXISTS {SCORE_TABLE} ADD COLUMN IF NOT EXISTS flag_anomalia boolean")
 
     trino_io.replace_table(
@@ -344,10 +296,8 @@ def run(contamination: float | str = "auto", persist: bool = True) -> pd.DataFra
         scores = score_anomalia(model, X)
         flags = flag_anomalia(model, X)
         save_model(model, list(X.columns))
-        # Além do .joblib (usado por load_model/save_model pra recarregar
-        # model+feature_columns juntos), loga no formato nativo do MLflow —
-        # habilita Model Registry/serving direto pelo MLflow, sem precisar do
-        # nosso bundle. Incorporado do script da Fernanda (mlflow.sklearn.log_model).
+        # Além do .joblib (save_model/load_model), loga no formato nativo do
+        # MLflow — habilita Model Registry/serving direto, sem o bundle.
         mlflow.sklearn.log_model(model, artifact_path="isolation_forest_model")
 
         resultado = raw[["id_contrato_origem", "ano"]].copy()

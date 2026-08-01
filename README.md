@@ -46,6 +46,10 @@ ciclo é validado automaticamente por **CI/CD** (GitHub Actions) a cada push.
 > Guia de acesso a cada aplicação do projeto (Airflow, Trino, HDFS, MLflow,
 > Jupyter): [`documentacao/guia-de-exploracao.md`](documentacao/guia-de-exploracao.md).
 
+<p align="center">
+  <img src="slide-html/assets/arquitetura-diagrama.svg" alt="Diagrama de arquitetura completo: fontes, Bronze, Silver, Gold, ML/IA, consumo e governança" width="900">
+</p>
+
 ## Visão geral
 
 Duas fontes, sem trilha de auditoria nem chave confiável, viram uma base analítica
@@ -301,6 +305,38 @@ Depois que o pipeline rodou (via Airflow ou manualmente), veja
 para o passo a passo de acesso a cada aplicação (Airflow, Trino, HDFS,
 MLflow, Jupyter, dbt docs) e exemplos de query para explorar/analisar os
 dados em cada camada.
+
+## Capturas de tela
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-hdfs.png" alt="HDFS NameNode UI mostrando o diretório /bronze"><br>
+      <sub><b>HDFS</b> — diretório <code>/bronze</code> particionado por fonte/ano/mês/data de extração.</sub>
+    </td>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-airflow.png" alt="Airflow mostrando as DAGs do pipeline"><br>
+      <sub><b>Airflow</b> — as 4 DAGs encadeadas por Dataset (Bronze → Silver → Gold → ML/IA).</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-trino.png" alt="Trino executando uma consulta na Gold"><br>
+      <sub><b>Trino</b> — consulta direta às tabelas Iceberg da Gold.</sub>
+    </td>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-dbeaver.png" alt="DBeaver conectado ao Trino"><br>
+      <sub><b>DBeaver</b> — exploração ad-hoc do catálogo <code>iceberg</code> via JDBC.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-mlflow.png" alt="MLflow mostrando os experimentos de ML"><br>
+      <sub><b>MLflow</b> — histórico de execuções dos dois modelos (parâmetros, métricas, artefatos).</sub>
+    </td>
+    <td width="50%"></td>
+  </tr>
+</table>
 
 ## Notebooks
 

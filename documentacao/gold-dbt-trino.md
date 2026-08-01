@@ -60,6 +60,8 @@ flowchart LR
     `dbt_utils`, para não precisar de `dbt deps`/egress).
   - `models/marts/schema.yml` → testes (`unique`/`not_null` nas SK, `relationships`
     fato→dim, `accepted_values` em `tipo_credor`) no lugar de constraints do Postgres.
+    Catálogo completo dos 62 testes (genéricos + os 10 singulares em `dbt/tests/`):
+    [`testes-dbt.md`](testes-dbt.md).
 - **Imagem dbt** (`dbt/Dockerfile`): `python:3.11-slim` + `dbt-trino`, isolada do
   Airflow (evita conflito dbt-core × airflow). Serviço `dbt` no compose com
   `profiles: ["tools"]` (não sobe no `up`).

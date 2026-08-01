@@ -100,9 +100,10 @@ validada rodando sem intervenção manual. Detalhes de arquitetura e das decisõ
 `ordem_bancaria_orcamentaria` 1.399.810 · `contratos` 216.358 · `unidade_gestora` 5.011 na
 Silver; na Gold, `fato_empenho` 1.376.379 · `fato_contrato` 216.358 · `fato_ordem_bancaria`
 1.399.810 · `dim_credor` 10.637 (**SCD2**) · `dim_orgao` 5.011 · `dim_tempo` 1.584 ·
-`dim_modalidade` 21. Testes dbt: fontes (Silver/ml/audit) com `not_null`/`unique` nas chaves
-de negócio + 5 testes singulares de chave composta, todos rodando de verdade em CI a cada
-push (ver seção "CI/CD" abaixo) — não só validados manualmente.
+`dim_modalidade` 21. Testes dbt: **62 no total** (32 nas colunas dos modelos da Gold, 20 nas
+fontes Silver/ml/audit, 10 testes singulares de regra de negócio), todos rodando de verdade em
+CI a cada push (ver seção "CI/CD" abaixo) — não só validados manualmente. Catálogo completo,
+teste a teste: [`documentacao/testes-dbt.md`](documentacao/testes-dbt.md).
 
 ## Estrutura de diretórios
 

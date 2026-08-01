@@ -309,6 +309,8 @@ dados em cada camada.
 
 ## Capturas de tela
 
+### Interfaces técnicas
+
 <table>
   <tr>
     <td width="50%">
@@ -336,6 +338,43 @@ dados em cada camada.
       <sub><b>MLflow</b> — histórico de execuções dos dois modelos (parâmetros, métricas, artefatos).</sub>
     </td>
     <td width="50%"></td>
+  </tr>
+</table>
+
+### Painel de negócio (Streamlit)
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-dash-geral.png" alt="Painel Streamlit, aba Visão Geral"><br>
+      <sub><b>Visão Geral</b> — valor total empenhado/pago e execução financeira ao longo do ano.</sub>
+    </td>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-dash-previsao.png" alt="Painel Streamlit, aba Previsão de Pagamentos"><br>
+      <sub><b>Previsão de Pagamentos</b> — valor real vs. previsto por trimestre (XGBoost quantílico, com faixa de incerteza).</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-dash-anomalias.png" alt="Painel Streamlit, aba Anomalias em Contratos"><br>
+      <sub><b>Anomalias em Contratos</b> — distribuição do score de anomalia (Isolation Forest) por faixa de risco.</sub>
+    </td>
+    <td width="50%"></td>
+  </tr>
+</table>
+
+### Painéis operacionais (Superset)
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-dashs-superset.png" alt="Lista de dashboards do Superset"><br>
+      <sub><b>Dashboards</b> — os 4 painéis internos: cargas/qualidade, execuções do Airflow, infraestrutura e auditoria de acesso.</sub>
+    </td>
+    <td width="50%">
+      <img src="slide-html/assets/screenshot-monitoramento-airflow.png" alt="Dashboard Execuções do Airflow no Superset"><br>
+      <sub><b>Execuções do Airflow</b> — sucesso/falha e duração média das DAGs, por dia.</sub>
+    </td>
   </tr>
 </table>
 

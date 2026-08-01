@@ -163,7 +163,7 @@ class TestDedupBatch:
 class TestMergeIdempotency:
     """O teste central do item 8: reprocessar o MESMO lote não deve duplicar
     linhas na tabela Iceberg — é a promessa central do `MERGE INTO` (ver
-    docstring de `silver_job.py` e docs/04-por-que-foi-evolucao.md)."""
+    docstring de `silver_job.py` e documentacao/lakehouse-spark-iceberg.md)."""
 
     def test_reprocessing_same_batch_keeps_row_count_stable(self, spark):
         source = "unidade_gestora"  # dedup key (codigo, ano) — mais simples pro teste

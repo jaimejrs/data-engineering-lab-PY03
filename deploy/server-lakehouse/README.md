@@ -38,6 +38,12 @@ read-only em `~/repo` + `rsync` pros diretórios live) — viabilizado pelo fix
 de egress IPv4 (`FIX-EGRESS-IPV4.md`), que também resolveu o servidor não
 alcançar o GitHub. Antes disso o código ia por `scp` arquivo a arquivo.
 
+> **Nunca edite arquivos direto em `/home/dataadm/repo`** — esse diretório é
+> sincronizado automaticamente (`git pull` do `sync-from-git.sh`/`auto-sync.py`);
+> qualquer mudança manual lá é sobrescrita ou conflita com o próximo sync. Para
+> testar algo pontual, copie para um diretório à parte (ex.:
+> `cp -r ~/repo/dbt ~/dbt_test`).
+
 **Automatizado (25/07/2026, à noite):** `auto-sync.py` roda via `cron`
 (`*/15 * * * *`, usuário `dataadm`) e dispara o `sync-from-git.sh --apply`
 sozinho — só quando há commit novo em `main` **e** a CI desse commit já

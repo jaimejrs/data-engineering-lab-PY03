@@ -1,7 +1,7 @@
 # Workaround — saída IPv4 para a task `extract_api`
 
 Última atualização: 19/07/2026 · Aplicado e validado em produção (ver `docs/checklist.md`
-e `docs/relatorio-orquestracao-dag1.md` para o histórico anterior a esta correção).
+para o histórico anterior a esta correção).
 
 > **Descontinuado em 24/07/2026:** a causa raiz (sem rota IPv4 padrão no
 > host) foi corrigida na origem (`dhcp4: true` no netplan do
@@ -31,8 +31,8 @@ ponte para uma rede que tenha IPv4 real — isso não é um problema de iptables
 é uma limitação do host em si (provavelmente do provedor de hospedagem).
 
 Uma tentativa anterior de resolver isso configurando um **exit node do Tailscale**
-quebrou o roteamento local para as redes Docker (`rota /15 do Tailscale sobrepondo a
-rota da bridge local`, ver `relatorio-orquestracao-dag1.md`) e foi revertida.
+quebrou o roteamento local para as redes Docker (rota `/15` do Tailscale sobrepondo a
+rota da bridge local) e foi revertida.
 
 ## Solução aplicada: relay TCP via Tailscale (sem exit node)
 

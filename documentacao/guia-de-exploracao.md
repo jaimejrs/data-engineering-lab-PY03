@@ -28,7 +28,7 @@ não só ler o código, mas rodar uma query, abrir uma UI, ler um log real.
 | Notebooks / EDA | Jupyter | `localhost:8888` (token `datalab`, ver `.env`) | — (rode local, aponte pro Trino do servidor) |
 | Spark (backfills manuais) | Spark master UI | `localhost:8081` | interno à rede Docker do servidor |
 | Painel de negócio | Streamlit | — (requer o overlay do servidor, não sobe no `docker-compose.yml` raiz) | `100.69.31.14:8501` **ou** link público (Tailscale Funnel, sem VPN — ver seção 8) |
-| Painéis operacionais (infra/acesso) | Superset | — | interno à rede Docker do servidor |
+| Painéis operacionais (infra/acesso) | Superset | — | `100.69.31.14:8089` |
 | Qualidade de código | CI (GitHub Actions) | — | `gh run list` / aba **Actions** no GitHub |
 
 ---
@@ -144,14 +144,26 @@ mlflow ui --backend-store-uri file://$(pwd)/models/artifacts/mlruns
 # abre em http://localhost:5000
 ```
 
-Para ver os experimentos **do servidor**, copie a pasta antes (ou rode o
-`mlflow ui` dentro do próprio container, publicando a porta):
+Para ver os experimentos **do servidor**, o container do Airflow scheduler não
+publica a porta 5000 pro host — o túnel SSH precisa apontar pro IP do container na
+rede Docker, não pra `localhost`:
 ```bash
-# no servidor
-docker exec -it datalab_airflow_scheduler bash
-mlflow ui --backend-store-uri file:///opt/airflow/models/artifacts/mlruns --host 0.0.0.0 --port 5000
-# depois, do seu lado: ssh -L 5000:localhost:5000 dataadm@100.69.31.14 (encaminha a porta via SSH)
+# 1. no servidor, inicia a UI dentro do container:
+ssh dataadm@100.69.31.14
+docker exec -d datalab_airflow_scheduler mlflow ui \
+  --backend-store-uri file:///opt/airflow/models/artifacts/mlruns \
+  --host 0.0.0.0 --port 5000
+
+# 2. descobre o IP do container na rede Docker:
+docker inspect datalab_airflow_scheduler \
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+# ex: 172.19.0.4
+
+# 3. do seu lado (outro terminal), encaminha a porta via SSH pro IP do container:
+ssh -N -L 5000:172.19.0.4:5000 dataadm@100.69.31.14
 ```
+Depois é só abrir `http://localhost:5000`. O IP do container pode mudar se ele for
+recriado — repita o passo 2 se o túnel parar de responder.
 
 O que olhar na UI: dois experimentos (`anomaly_detection`,
 `payment_forecast`), cada run com os `params` do treino, as `metrics`
@@ -254,7 +266,43 @@ aparecer no painel sem precisar reiniciar o container.
 
 ---
 
-## 9. Qualidade de código — lint, testes, CI
+## 9. Superset — painéis operacionais (saúde do pipeline)
+
+Uso interno/operacional (saúde do próprio pipeline) — não é o painel de negócio
+(esse é o Streamlit, seção 8).
+
+**UI:** `http://100.69.31.14:8089` (só na tailnet), login `admin`/senha configurada.
+
+Menu **Dashboards** → 4 painéis já prontos:
+- **Cargas e Qualidade do Pipeline** — volume por fonte, última carga, % que chegou
+  até a Silver/Gold.
+- **Execuções do Airflow** — sucesso/falha por DAG, duração, tasks que mais falham.
+- **Métricas de Infraestrutura** — CPU/memória por container, uso de disco.
+- **Auditoria de Acesso** — quem entrou via SSH e quais comandos rodou (inclusive via
+  `sudo`).
+
+Para consulta SQL ad-hoc direto no Trino, sem criar dataset novo: menu **SQL Lab**.
+
+---
+
+## 10. Postgres — metadados (raramente precisa acessar direto)
+
+Duas instâncias, ambas via SSH (seção 1):
+
+```bash
+# metadados do Airflow + DB metastore do Hive
+docker exec -it datalab_postgres psql -U dlab -d datalab
+
+# DW legado (descontinuado — a Gold hoje é Iceberg via dbt, não Postgres)
+psql -h 100.69.31.14 -p 5434 -U dw_user -d ceara_dw
+```
+
+Só acesse isso depurando o próprio Airflow/Hive Metastore por dentro — para dado de
+negócio, sempre prefira o Trino (seção 3).
+
+---
+
+## 11. Qualidade de código — lint, testes, CI
 
 ```bash
 ruff check .              # lint (E/F/I/UP/B — ver pyproject.toml)
@@ -287,6 +335,7 @@ gh run view <run_id>        # detalhe de uma execução
 | Postgres DW (descontinuado) | `100.69.31.14:5434` | legado — Gold real hoje é Iceberg, não este banco |
 | MLflow | sem porta fixa — `mlflow ui` sob demanda | backend de arquivo, `models/artifacts/mlruns/` |
 | Painel de negócio (Streamlit) | `100.69.31.14:8501` **ou** `https://datalab-server.taila180c3.ts.net/` | o link Funnel é a **única exceção** ao pré-requisito de Tailscale abaixo |
+| Superset (painéis internos) | `100.69.31.14:8089` | login configurado; uso interno, não é o painel de negócio |
 
 Pré-requisito comum: estar na **Tailscale** do time para alcançar
 `100.69.31.14` — exceto o painel de negócio (Streamlit), exposto

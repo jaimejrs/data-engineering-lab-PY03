@@ -17,9 +17,10 @@ já não existe mais.
 ## `network: host` no build
 
 Se você builda esta imagem em um host cujos containers não têm rota de saída
-para a internet (ex: bloqueio de IPv4 nas redes bridge do Docker — problema já
-documentado em `docs/relatorio-orquestracao-dag1.md` para a task `extract_api`),
-o `RUN pip install` dentro do build falha com
+para a internet (ex: bloqueio de IPv4 nas redes bridge do Docker — mesmo
+problema documentado em
+[`documentacao/workaround-egress-ipv4-api.md`](../../documentacao/workaround-egress-ipv4-api.md)
+para a task `extract_api`), o `RUN pip install` dentro do build falha com
 `Temporary failure in name resolution`, mesmo que o host tenha internet.
 `docker-compose.yml` já define `network: host` para o build destes serviços,
 o que faz o container de build usar a interface de rede do host diretamente e

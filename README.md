@@ -47,7 +47,7 @@ ciclo é validado automaticamente por **CI/CD** (GitHub Actions) a cada push.
 > Jupyter): [`documentacao/guia-de-exploracao.md`](documentacao/guia-de-exploracao.md).
 
 <p align="center">
-  <img src="slide-html/assets/arquitetura-diagrama.svg" alt="Diagrama de arquitetura completo: fontes, Bronze, Silver, Gold, ML/IA, consumo e governança" width="900">
+  <img src="imgs/arquitetura-diagrama.svg" alt="Diagrama de arquitetura completo: fontes, Bronze, Silver, Gold, ML/IA, consumo e governança" width="900">
 </p>
 
 ## Visão geral
@@ -133,10 +133,10 @@ teste a teste: [`documentacao/testes-dbt.md`](documentacao/testes-dbt.md).
 │   │                             #   collect_infra_metrics.py / collect_access_audit.py: schema audit)
 ├── .github/workflows/ci.yml      # CI (6 jobs) + CD (deploy via SSH/Tailscale) — ver seção "CI/CD"
 ├── documentacao/                 # documentação técnica de entrega (arquitetura, dicionário de dados)
-├── slide-html/                   # apresentação HTML de entrega (storytelling do projeto)
+├── imgs/               # screenshots/diagrama usados neste README (apresentação em si foi descontinuada)
 ├── notebooks/                    # exploração de ingestão + EDA Bronze/Silver/Gold + treino/avaliação ML
 ├── tests/                        # pytest — extractors, validators, transformers, modelos de ML
-├── apresentacao/                 # rascunho de apresentação HTML (git-ignorada — ver slide-html/ pra versão de entrega)
+├── apresentacao/                 # rascunho de apresentação HTML (git-ignorada)
 ├── .env / .env.example
 └── requirements.txt
 ```
@@ -314,27 +314,27 @@ dados em cada camada.
 <table>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-hdfs.png" alt="HDFS NameNode UI mostrando o diretório /bronze"><br>
+      <img src="imgs/screenshot-hdfs.png" alt="HDFS NameNode UI mostrando o diretório /bronze"><br>
       <sub><b>HDFS</b> — diretório <code>/bronze</code> particionado por fonte/ano/mês/data de extração.</sub>
     </td>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-airflow.png" alt="Airflow mostrando as DAGs do pipeline"><br>
+      <img src="imgs/screenshot-airflow.png" alt="Airflow mostrando as DAGs do pipeline"><br>
       <sub><b>Airflow</b> — as 4 DAGs encadeadas por Dataset (Bronze → Silver → Gold → ML/IA).</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-trino.png" alt="Trino executando uma consulta na Gold"><br>
+      <img src="imgs/screenshot-trino.png" alt="Trino executando uma consulta na Gold"><br>
       <sub><b>Trino</b> — consulta direta às tabelas Iceberg da Gold.</sub>
     </td>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-dbeaver.png" alt="DBeaver conectado ao Trino"><br>
+      <img src="imgs/screenshot-dbeaver.png" alt="DBeaver conectado ao Trino"><br>
       <sub><b>DBeaver</b> — exploração ad-hoc do catálogo <code>iceberg</code> via JDBC.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-mlflow.png" alt="MLflow mostrando os experimentos de ML"><br>
+      <img src="imgs/screenshot-mlflow.png" alt="MLflow mostrando os experimentos de ML"><br>
       <sub><b>MLflow</b> — histórico de execuções dos dois modelos (parâmetros, métricas, artefatos).</sub>
     </td>
     <td width="50%"></td>
@@ -346,17 +346,17 @@ dados em cada camada.
 <table>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-dash-geral.png" alt="Painel Streamlit, aba Visão Geral"><br>
+      <img src="imgs/screenshot-dash-geral.png" alt="Painel Streamlit, aba Visão Geral"><br>
       <sub><b>Visão Geral</b> — valor total empenhado/pago e execução financeira ao longo do ano.</sub>
     </td>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-dash-previsao.png" alt="Painel Streamlit, aba Previsão de Pagamentos"><br>
+      <img src="imgs/screenshot-dash-previsao.png" alt="Painel Streamlit, aba Previsão de Pagamentos"><br>
       <sub><b>Previsão de Pagamentos</b> — valor real vs. previsto por trimestre (XGBoost quantílico, com faixa de incerteza).</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-dash-anomalias.png" alt="Painel Streamlit, aba Anomalias em Contratos"><br>
+      <img src="imgs/screenshot-dash-anomalias.png" alt="Painel Streamlit, aba Anomalias em Contratos"><br>
       <sub><b>Anomalias em Contratos</b> — distribuição do score de anomalia (Isolation Forest) por faixa de risco.</sub>
     </td>
     <td width="50%"></td>
@@ -368,11 +368,11 @@ dados em cada camada.
 <table>
   <tr>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-dashs-superset.png" alt="Lista de dashboards do Superset"><br>
+      <img src="imgs/screenshot-dashs-superset.png" alt="Lista de dashboards do Superset"><br>
       <sub><b>Dashboards</b> — os 4 painéis internos: cargas/qualidade, execuções do Airflow, infraestrutura e auditoria de acesso.</sub>
     </td>
     <td width="50%">
-      <img src="slide-html/assets/screenshot-monitoramento-airflow.png" alt="Dashboard Execuções do Airflow no Superset"><br>
+      <img src="imgs/screenshot-monitoramento-airflow.png" alt="Dashboard Execuções do Airflow no Superset"><br>
       <sub><b>Execuções do Airflow</b> — sucesso/falha e duração média das DAGs, por dia.</sub>
     </td>
   </tr>

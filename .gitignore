@@ -25,6 +25,9 @@ apresentacao/
 # Guias internos das stacks utilizadas (alinhamento do time, não é entrega)
 stacks/
 
+# Rascunhos de artigos para o Medium — conteúdo pessoal, não é entrega
+artigos-medium/
+
 # Artefatos de modelos treinados (binários grandes, reproduzíveis a partir do código)
 models/artifacts/
 

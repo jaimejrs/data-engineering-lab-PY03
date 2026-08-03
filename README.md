@@ -38,6 +38,7 @@ arquitetura **medalhão (Bronze → Silver → Gold)** que evoluiu de um *data l
 (reconciliação, observabilidade de infra e auditoria de acesso) — e todo o
 ciclo é validado automaticamente por **CI/CD** (GitHub Actions) a cada push.
 
+[**`Artigos sobre o projeto`**](https://medium.com/@jaimejrs/construindo-um-lakehouse-de-dados-públicos-parte-1-preparando-o-terreno-5710118d39630)
 
 `Fases 1, 2 e 3 concluídas de ponta a ponta (Bronze → Silver → Gold → ML/IA, automáticas)` · Última atualização: 28/07/2026
 
